@@ -1,0 +1,31 @@
+{
+  "name": "origin-web-admin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Painel web de administracao do launcher Origin.",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "next build",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "googleapis": "^144.0.0",
+    "multer": "^1.4.5-lts.1",
+    "next": "^16.1.6",
+    "passport": "^0.7.0",
+    "passport-steam": "^1.0.18",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.6",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

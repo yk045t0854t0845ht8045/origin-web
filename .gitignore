@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+.env
+*.service-account.json
+*-service-account.json
+origin-launcher-*.json
+data/*.db
+data/*.db-*
+uploads-temp/*
+!uploads-temp/.gitkeep
+!data/.gitkeep
