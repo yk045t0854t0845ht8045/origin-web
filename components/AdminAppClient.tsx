@@ -222,6 +222,7 @@ const INITIAL_FORM: FormState = {
 
 const EDITOR_DRAFT_STORAGE_KEY = "wplay.admin.editor.draft.v1";
 const EDITOR_LAYOUT_STORAGE_KEY = "wplay.admin.editor.layout.v1";
+const NOTICE_AUTO_HIDE_MS = 4000;
 
 function normalizeId(value: string): string {
   return String(value || "")
@@ -1017,6 +1018,8 @@ export function AdminAppClient() {
   const youtubeAutoLoadTimerRef = useRef<number | null>(null);
   const youtubeLastLoadedUrlRef = useRef("");
   const youtubeRequestSeqRef = useRef(0);
+  const noticeHideTimerRef = useRef<number | null>(null);
+  const noticeHoveredRef = useRef(false);
 
   const suggestedId = useMemo(() => normalizeId(form.name), [form.name]);
   const resolvedId = useMemo(() => normalizeId(form.id || suggestedId), [form.id, suggestedId]);
@@ -1154,6 +1157,41 @@ export function AdminAppClient() {
     () => youtubeQualityOptions.find((option) => String(option.itag) === youtubeSelectedItag) || null,
     [youtubeQualityOptions, youtubeSelectedItag]
   );
+
+  function clearNoticeHideTimer() {
+    if (noticeHideTimerRef.current !== null) {
+      window.clearTimeout(noticeHideTimerRef.current);
+      noticeHideTimerRef.current = null;
+    }
+  }
+
+  function scheduleNoticeHideTimer(delayMs = NOTICE_AUTO_HIDE_MS) {
+    clearNoticeHideTimer();
+    if (!notice.msg || noticeHoveredRef.current) {
+      return;
+    }
+    noticeHideTimerRef.current = window.setTimeout(() => {
+      noticeHideTimerRef.current = null;
+      setNotice((prev) => {
+        if (!prev.msg || noticeHoveredRef.current) {
+          return prev;
+        }
+        return { msg: "", error: false };
+      });
+    }, delayMs);
+  }
+
+  function handleNoticeMouseEnter() {
+    noticeHoveredRef.current = true;
+    clearNoticeHideTimer();
+  }
+
+  function handleNoticeMouseLeave() {
+    noticeHoveredRef.current = false;
+    if (notice.msg) {
+      scheduleNoticeHideTimer(NOTICE_AUTO_HIDE_MS);
+    }
+  }
 
   function setNoticeState(msg: string, error = false) {
     setNotice({ msg, error });
@@ -1948,6 +1986,22 @@ export function AdminAppClient() {
 
   useEffect(() => {
     void loadViewer({ showLoading: false });
+  }, []);
+
+  useEffect(() => {
+    if (!notice.msg) {
+      clearNoticeHideTimer();
+      return;
+    }
+    if (!noticeHoveredRef.current) {
+      scheduleNoticeHideTimer(NOTICE_AUTO_HIDE_MS);
+    }
+  }, [notice.msg]);
+
+  useEffect(() => {
+    return () => {
+      clearNoticeHideTimer();
+    };
   }, []);
 
   useEffect(() => {
@@ -3815,7 +3869,15 @@ export function AdminAppClient() {
         </aside>
       ) : null}
 
-      {notice.msg ? <div className={`alert ${notice.error ? "is-error" : "is-success"}`}>{notice.msg}</div> : null}
+      {notice.msg ? (
+        <div
+          className={`alert ${notice.error ? "is-error" : "is-success"}`}
+          onMouseEnter={handleNoticeMouseEnter}
+          onMouseLeave={handleNoticeMouseLeave}
+        >
+          {notice.msg}
+        </div>
+      ) : null}
     </main>
   );
 }
