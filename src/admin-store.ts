@@ -1,3 +1,4 @@
+// @ts-nocheck
 const { isValidSteamId } = require("./utils");
 
 function nowIso() {

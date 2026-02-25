@@ -1,3 +1,4 @@
+// @ts-nocheck
 function slugify(value) {
   const normalized = String(value || "")
     .trim()

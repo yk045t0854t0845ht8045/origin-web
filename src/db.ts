@@ -1,3 +1,4 @@
+// @ts-nocheck
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");

@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "Painel web de administracao do launcher Origin.",
-  "main": "server.js",
   "scripts": {
     "dev": "next dev -p 4080",
     "build": "next build",

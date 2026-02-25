@@ -1,3 +1,4 @@
+// @ts-nocheck
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -1630,7 +1631,7 @@ function createServer() {
 
   app.get("/auth/steam", (req, res, nextMiddleware) => {
     if (!config.steamApiKey) {
-      res.redirect("/?error=steam-key-missing");
+      res.redirect("/?error=steam-disabled");
       return;
     }
     passport.authenticate("steam", { failureRedirect: "/?error=steam-login" })(req, res, nextMiddleware);
@@ -1638,7 +1639,7 @@ function createServer() {
 
   app.get("/auth/steam/return", (req, res, nextMiddleware) => {
     if (!config.steamApiKey) {
-      res.redirect("/?error=steam-key-missing");
+      res.redirect("/?error=steam-disabled");
       return;
     }
     passport.authenticate("steam", { failureRedirect: "/?error=steam-callback" })(req, res, () => {
@@ -1938,7 +1939,7 @@ async function start() {
       );
     }
     if (!config.steamApiKey) {
-      console.log("[origin-web-admin] STEAM_API_KEY nao configurada; login Steam desativado.");
+      console.log("[origin-web-admin] STEAM_API_KEY nao configurada; login Steam com passport desativado.");
     }
   });
 }

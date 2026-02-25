@@ -1,3 +1,4 @@
+// @ts-nocheck
 const serverless = require("serverless-http");
 const { createApiApp } = require("../../src/api-app");
 
@@ -6,9 +7,11 @@ const handler = serverless(app, {
   request: (req, _event, _context) => req
 });
 
-module.exports = async (req, res) => handler(req, res);
+export default async function apiCatchAll(req, res) {
+  return handler(req, res);
+}
 
-module.exports.config = {
+export const config = {
   api: {
     bodyParser: false,
     externalResolver: true

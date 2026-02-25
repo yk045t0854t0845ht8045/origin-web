@@ -763,12 +763,26 @@ function gameToForm(game: LauncherGame): FormState {
 
 function authQueryMessage(searchParams: URLSearchParams): string {
   const error = searchParams.get("error");
-  if (error === "steam-key-missing") return "STEAM_API_KEY nao configurada no servidor.";
+  if (error === "steam-key-missing") return "Login Steam indisponivel na configuracao atual do servidor.";
+  if (error === "steam-disabled") return "Login Steam desativado no servidor.";
   if (error === "steam-login" || error === "steam-callback") return "Falha no login Steam.";
   if (error === "not-admin") return "Sua Steam nao esta autorizada para este painel.";
   if (error === "admin-storage") return "Nao foi possivel validar staff no banco de dados.";
   if (searchParams.get("login") === "ok") return "Login Steam validado com sucesso.";
   return "";
+}
+
+function buildDirectSteamOpenIdUrl(baseUrl: string): string {
+  const normalizedBase = String(baseUrl || "").replace(/\/+$/g, "");
+  const returnToUrl = `${normalizedBase}/api/auth/steam/return`;
+  const endpoint = new URL("https://steamcommunity.com/openid/login");
+  endpoint.searchParams.set("openid.ns", "http://specs.openid.net/auth/2.0");
+  endpoint.searchParams.set("openid.mode", "checkid_setup");
+  endpoint.searchParams.set("openid.return_to", returnToUrl);
+  endpoint.searchParams.set("openid.realm", normalizedBase);
+  endpoint.searchParams.set("openid.identity", "http://specs.openid.net/auth/2.0/identifier_select");
+  endpoint.searchParams.set("openid.claimed_id", "http://specs.openid.net/auth/2.0/identifier_select");
+  return endpoint.toString();
 }
 
 function normalizeStaffRole(roleRaw: string): "developer" | "administrador" | "staff" {
@@ -818,7 +832,7 @@ function extractSteamIdFromStaffInput(value: string): string {
 
 export function AdminAppClient() {
   const [viewer, setViewer] = useState<ViewerState>(EMPTY_VIEWER);
-  const [viewerLoading, setViewerLoading] = useState(true);
+  const [viewerLoading, setViewerLoading] = useState(false);
 
   const [games, setGames] = useState<LauncherGame[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
@@ -1393,8 +1407,11 @@ export function AdminAppClient() {
     if (galleryUploadInputRef.current) galleryUploadInputRef.current.value = "";
   }
 
-  async function loadViewer() {
-    setViewerLoading(true);
+  async function loadViewer(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading !== false;
+    if (showLoading) {
+      setViewerLoading(true);
+    }
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 12000);
     try {
@@ -1428,7 +1445,9 @@ export function AdminAppClient() {
       }
     } finally {
       window.clearTimeout(timeoutId);
-      setViewerLoading(false);
+      if (showLoading) {
+        setViewerLoading(false);
+      }
     }
   }
 
@@ -1573,17 +1592,8 @@ export function AdminAppClient() {
   }, []);
 
   useEffect(() => {
-    void loadViewer();
+    void loadViewer({ showLoading: false });
   }, []);
-
-  useEffect(() => {
-    if (!viewerLoading) return;
-    const fallback = window.setTimeout(() => {
-      setViewerLoading(false);
-      setNoticeState("Sessao demorou para carregar. Voce pode tentar o login Steam manualmente.", true);
-    }, 15000);
-    return () => window.clearTimeout(fallback);
-  }, [viewerLoading]);
 
   useEffect(() => {
     if (!isUserMenuOpen) return;
@@ -1711,7 +1721,12 @@ export function AdminAppClient() {
   }, [view, isSaving, isUploadingGallery]);
 
   function startLogin() {
-    window.location.href = "/api/auth/steam";
+    try {
+      const directUrl = buildDirectSteamOpenIdUrl(window.location.origin);
+      window.location.assign(directUrl);
+    } catch (_error) {
+      window.location.assign(`/api/auth/steam?ts=${Date.now()}`);
+    }
   }
 
   async function logout() {
@@ -2181,28 +2196,6 @@ export function AdminAppClient() {
     setDashboardSection(next);
   }
 
-  if (viewerLoading) {
-    return (
-      <main className="admin-root">
-        <section className="auth-shell">
-          <article className="card auth-card">
-            <p className="kicker">WPLAY STAFF PANEL</p>
-            <h1>Carregando sessao...</h1>
-            <p className="text-muted">Se demorar mais de alguns segundos, tente entrar manualmente.</p>
-            <div className="auth-actions">
-              <button className="button button-primary" onClick={startLogin}>
-                Entrar com Steam
-              </button>
-              <button className="button button-secondary" onClick={() => void loadViewer()}>
-                Tentar novamente
-              </button>
-            </div>
-          </article>
-        </section>
-      </main>
-    );
-  }
-
   if (!viewer.authenticated) {
     return (
       <main className="admin-root">
@@ -2212,12 +2205,18 @@ export function AdminAppClient() {
             <h1>Login com Steam</h1>
             <p className="text-muted">Apenas SteamID autorizado acessa o painel.</p>
             {authMsg ? <p className="inline-alert is-warning">{authMsg}</p> : null}
+            {viewerLoading ? <p className="text-muted">Carregando sessao...</p> : null}
             {!viewer.steamLoginReady && viewer.steamLoginReason ? (
               <p className="inline-alert is-warning">{viewer.steamLoginReason}</p>
             ) : null}
-            <button className="button button-primary" onClick={startLogin}>
-              Entrar com Steam
-            </button>
+            <div className="auth-actions">
+              <button className="button button-primary" onClick={startLogin}>
+                Entrar com Steam
+              </button>
+              <button className="button button-secondary" onClick={() => void loadViewer()}>
+                Tentar novamente
+              </button>
+            </div>
           </article>
         </section>
       </main>

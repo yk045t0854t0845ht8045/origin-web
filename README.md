@@ -26,7 +26,8 @@ Dentro de `site/`:
 1. Copie `.env.example` para `.env`.
 2. Preencha pelo menos:
    - `BASE_URL` (ex.: `https://seu-projeto.vercel.app`)
-   - `STEAM_API_KEY`
+   - `STEAM_LOGIN_ENABLED=true`
+   - `SESSION_SECRET`
    - `SITE_BOOTSTRAP_ADMIN_IDS` (ou `SITE_BOOTSTRAP_ADMIN_TABLE`)
    - `GOOGLE_DRIVE_KEY_FILE` ou `GOOGLE_SERVICE_ACCOUNT_JSON` (apenas se for fazer upload pelo painel)
    - `SUPABASE_URL` e `SUPABASE_ANON_KEY`
@@ -93,7 +94,8 @@ Abra `http://localhost:4080`.
 - O login Steam usa `GET /api/auth/steam` e callback em `GET /api/auth/steam/return`.
 - Configure no projeto da Vercel as variaveis:
   - `BASE_URL` com o dominio publico HTTPS do deploy.
-  - `STEAM_API_KEY`, `SESSION_SECRET`.
+  - `STEAM_LOGIN_ENABLED` (`true` para habilitar), `SESSION_SECRET`.
+  - `STEAM_API_KEY` e opcional (apenas para enriquecer perfil em fluxos legados).
   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
   - `GOOGLE_DRIVE_KEY_FILE` **ou** `GOOGLE_SERVICE_ACCOUNT_JSON`.
 - Em serverless, uploads temporarios sao gravados em `/tmp`.
