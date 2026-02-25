@@ -1407,6 +1407,20 @@ export function AdminAppClient() {
     if (galleryUploadInputRef.current) galleryUploadInputRef.current.value = "";
   }
 
+  async function fetchApiWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 12000): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(input, {
+        ...init,
+        credentials: "include",
+        signal: controller.signal
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
   async function loadViewer(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading !== false;
     if (showLoading) {
@@ -1454,7 +1468,7 @@ export function AdminAppClient() {
   async function loadGames() {
     setGamesLoading(true);
     try {
-      const response = await fetch("/api/launcher-games?limit=500", { credentials: "include" });
+      const response = await fetchApiWithTimeout("/api/launcher-games?limit=500", {}, 15000);
       const json = (await response.json().catch(() => null)) as {
         ok?: boolean;
         games?: LauncherGame[];
@@ -1467,7 +1481,11 @@ export function AdminAppClient() {
       setGames(Array.isArray(json.games) ? json.games : []);
     } catch (error) {
       setGames([]);
-      setNoticeState(error instanceof Error ? error.message : "Falha ao carregar catalogo.", true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao carregar jogos. Tente recarregar em alguns segundos.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao carregar catalogo.", true);
+      }
     } finally {
       setGamesLoading(false);
     }
@@ -1476,13 +1494,17 @@ export function AdminAppClient() {
   async function loadAdmins() {
     setAdminsLoading(true);
     try {
-      const response = await fetch("/api/admins", { credentials: "include" });
+      const response = await fetchApiWithTimeout("/api/admins", {}, 15000);
       if (!response.ok) throw new Error(`Falha ao carregar staffs (${response.status}).`);
       const json = (await response.json()) as { admins?: AdminRecord[] };
       setAdmins(Array.isArray(json.admins) ? json.admins : []);
     } catch (error) {
       setAdmins([]);
-      setNoticeState(error instanceof Error ? error.message : "Falha ao carregar staffs.", true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao carregar staffs. Tente recarregar em alguns segundos.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao carregar staffs.", true);
+      }
     } finally {
       setAdminsLoading(false);
     }
@@ -1491,7 +1513,7 @@ export function AdminAppClient() {
   async function loadMaintenanceFlag() {
     setMaintenanceLoading(true);
     try {
-      const response = await fetch("/api/runtime-flags/maintenance", { credentials: "include" });
+      const response = await fetchApiWithTimeout("/api/runtime-flags/maintenance", {}, 12000);
       const json = (await response.json().catch(() => null)) as {
         ok?: boolean;
         flag?: unknown;
@@ -1509,7 +1531,11 @@ export function AdminAppClient() {
       setMaintenanceFlag(DEFAULT_MAINTENANCE_FLAG);
       setMaintenanceTitleDraft(DEFAULT_MAINTENANCE_FLAG.title);
       setMaintenanceMessageDraft(DEFAULT_MAINTENANCE_FLAG.message);
-      setNoticeState(error instanceof Error ? error.message : "Falha ao carregar manutencao.", true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao carregar manutencao. Tente novamente.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao carregar manutencao.", true);
+      }
     } finally {
       setMaintenanceLoading(false);
     }

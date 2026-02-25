@@ -222,14 +222,30 @@ const googleDrivePathPrefix = (() => {
 const googleDrivePublicLink = parseBoolean(process.env.GOOGLE_DRIVE_PUBLIC_LINK, false);
 const googleDriveKeyFile = String(process.env.GOOGLE_DRIVE_KEY_FILE || "").trim();
 const googleServiceAccountJson = String(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
-const supabaseUrl = String(process.env.SUPABASE_URL || authConfig.supabaseUrl || "")
+const supabaseUrl = String(
+  process.env.SUPABASE_URL ||
+    process.env.SUPABASE_PROJECT_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    authConfig.supabaseUrl ||
+    ""
+)
   .trim()
   .replace(/\/+$/g, "");
 const supabaseAnonKey = String(
-  process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || authConfig.supabaseAnonKey || ""
+  process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY ||
+    process.env.ANON ||
+    process.env.SUPABASE_ANON ||
+    authConfig.supabaseAnonKey ||
+    ""
 ).trim();
 const supabaseServiceRoleKey = String(
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ""
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SERVICE_ROLE ||
+    process.env.SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    ""
 ).trim();
 const supabaseRestKey = String(supabaseServiceRoleKey || supabaseAnonKey).trim();
 const adminsProviderRaw = String(process.env.SITE_ADMINS_PROVIDER || "auto")

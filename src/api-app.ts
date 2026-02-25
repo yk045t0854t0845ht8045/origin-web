@@ -26,6 +26,8 @@ const STEAM_AUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const STEAM_SUMMARY_FETCH_LIMIT = 100;
 const STEAM_SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000;
 const STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/login";
+const SUPABASE_FETCH_TIMEOUT_MS = 12000;
+const SUPABASE_FETCH_RETRIES = 1;
 
 const STAFF_ROLE = Object.freeze({
   DEVELOPER: "developer",
@@ -661,6 +663,48 @@ function parseSupabaseResponsePayload(rawText) {
   }
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = SUPABASE_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchSupabaseWithRetry(url, options = {}, retryCount = SUPABASE_FETCH_RETRIES) {
+  let lastError = null;
+  const maxAttempts = Math.max(1, Number(retryCount) + 1);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(url, options);
+      if (response.status >= 500 && attempt < maxAttempts - 1) {
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      const isAbort = error?.name === "AbortError";
+      if (isAbort && attempt >= maxAttempts - 1) {
+        throw new Error(`Supabase demorou para responder (timeout de ${Math.floor(SUPABASE_FETCH_TIMEOUT_MS / 1000)}s).`);
+      }
+      if (attempt >= maxAttempts - 1) {
+        throw error;
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error("Falha inesperada ao consultar Supabase.");
+}
+
 function buildSupabaseErrorMessage(responsePayload, status, fallback = "Falha no Supabase.") {
   return (
     responsePayload?.message ||
@@ -859,7 +903,7 @@ async function fetchLauncherGamesFromSupabase({ search = "", limit = 250 } = {})
     endpoint.searchParams.set("or", `(id.ilike.*${normalizedSearch}*,name.ilike.*${normalizedSearch}*)`);
   }
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchSupabaseWithRetry(endpoint.toString(), {
     method: "GET",
     headers: {
       apikey: config.supabaseRestKey,
@@ -891,7 +935,7 @@ async function fetchLauncherGameByIdFromSupabase(gameId) {
   endpoint.searchParams.set("id", `eq.${normalizedId}`);
   endpoint.searchParams.set("limit", "1");
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchSupabaseWithRetry(endpoint.toString(), {
     method: "GET",
     headers: {
       apikey: config.supabaseRestKey,
@@ -918,7 +962,7 @@ async function upsertLauncherGameInSupabase(gamePayload) {
     );
   }
 
-  const response = await fetch(`${config.supabaseUrl}/rest/v1/launcher_games?on_conflict=id`, {
+  const response = await fetchSupabaseWithRetry(`${config.supabaseUrl}/rest/v1/launcher_games?on_conflict=id`, {
     method: "POST",
     headers: {
       apikey: config.supabaseRestKey,
@@ -957,7 +1001,7 @@ async function deleteLauncherGameInSupabase(gameId) {
   endpoint.searchParams.set("id", `eq.${normalizedId}`);
   endpoint.searchParams.set("select", "id");
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchSupabaseWithRetry(endpoint.toString(), {
     method: "DELETE",
     headers: {
       apikey: config.supabaseRestKey,
@@ -995,7 +1039,7 @@ async function fetchRuntimeFlagFromSupabase(flagId) {
   endpoint.searchParams.set("id", `eq.${normalizedId}`);
   endpoint.searchParams.set("limit", "1");
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchSupabaseWithRetry(endpoint.toString(), {
     method: "GET",
     headers: {
       apikey: config.supabaseRestKey,
@@ -1023,7 +1067,7 @@ async function upsertRuntimeFlagInSupabase(flagPayload) {
     );
   }
 
-  const response = await fetch(`${config.supabaseUrl}/rest/v1/launcher_runtime_flags?on_conflict=id`, {
+  const response = await fetchSupabaseWithRetry(`${config.supabaseUrl}/rest/v1/launcher_runtime_flags?on_conflict=id`, {
     method: "POST",
     headers: {
       apikey: config.supabaseRestKey,

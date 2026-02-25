@@ -581,8 +581,18 @@ function clearSteamStateCookie(res, req) {
 }
 
 async function fetchAdminFromSupabase(steamId) {
-  const supabaseUrl = readText(process.env.SUPABASE_URL).replace(/\/+$/g, "");
-  const supabaseKey = readText(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY);
+  const supabaseUrl = readText(
+    process.env.SUPABASE_URL || process.env.SUPABASE_PROJECT_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+  ).replace(/\/+$/g, "");
+  const supabaseKey = readText(
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_SERVICE_KEY ||
+      process.env.SERVICE_ROLE ||
+      process.env.SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_KEY ||
+      process.env.ANON
+  );
   const schema = readText(process.env.SITE_ADMINS_SUPABASE_SCHEMA, "public");
   const table = readText(process.env.SITE_ADMINS_SUPABASE_TABLE, "admin_steam_ids");
 
