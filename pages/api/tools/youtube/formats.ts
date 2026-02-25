@@ -47,11 +47,18 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     const message = String(error?.message || "Falha ao ler qualidades do YouTube.");
-    const status = message.toLowerCase().includes("inval") || message.toLowerCase().includes("selecione") ? 400 : 502;
+    const lower = message.toLowerCase();
+    const status =
+      lower.includes("inval") || lower.includes("selecione")
+        ? 400
+        : lower.includes("429")
+          ? 429
+          : lower.includes("410")
+            ? 503
+            : 502;
     res.status(status).json({
       error: "youtube_formats_failed",
       message
     });
   }
 }
-

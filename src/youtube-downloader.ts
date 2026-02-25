@@ -1,10 +1,20 @@
 // @ts-nocheck
-const ytdl = require("ytdl-core");
+const ytdl = require("@distube/ytdl-core");
 
 const YOUTUBE_INFO_TIMEOUT_MS = 15000;
 const YOUTUBE_INFO_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const youtubeInfoCache = new Map();
+
+const YTDL_CLIENT_ATTEMPTS = [
+  { label: "default", options: {} },
+  { label: "tv_ios_android", options: { playerClients: ["TV", "IOS", "ANDROID"] } },
+  { label: "web_embedded_ios_android_tv", options: { playerClients: ["WEB_EMBEDDED", "IOS", "ANDROID", "TV"] } },
+  { label: "web_only", options: { playerClients: ["WEB"] } }
+];
+
+let ytdlAgent = null;
+let ytdlAgentInitialized = false;
 
 function readText(value, fallback = "") {
   const text = String(value ?? "").trim();
@@ -34,6 +44,16 @@ function normalizeYoutubeUrl(value) {
       return "";
     }
     return parsed.toString();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function extractVideoIdFromYoutubeUrl(value) {
+  const normalizedUrl = normalizeYoutubeUrl(value);
+  if (!normalizedUrl) return "";
+  try {
+    return readText(ytdl.getURLVideoID(normalizedUrl));
   } catch (_error) {
     return "";
   }
@@ -103,6 +123,101 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
       clearTimeout(timeoutId);
     }
   });
+}
+
+function parseYoutubeCookiesFromEnv() {
+  const raw =
+    readText(process.env.YOUTUBE_COOKIES_JSON) ||
+    readText(process.env.YTDL_COOKIES_JSON) ||
+    readText(process.env.YOUTUBE_COOKIES);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function getYtdlAgent() {
+  if (ytdlAgentInitialized) {
+    return ytdlAgent;
+  }
+  ytdlAgentInitialized = true;
+
+  try {
+    const cookies = parseYoutubeCookiesFromEnv();
+    if (cookies.length > 0) {
+      ytdlAgent = ytdl.createAgent(cookies);
+    }
+  } catch (_error) {
+    ytdlAgent = null;
+  }
+
+  return ytdlAgent;
+}
+
+function buildYtdlInfoOptions(extraOptions = {}) {
+  const agent = getYtdlAgent();
+  if (!agent) {
+    return { ...extraOptions };
+  }
+  return {
+    ...extraOptions,
+    agent
+  };
+}
+
+function isRetryableYoutubeError(error) {
+  const statusCode = Number(error?.statusCode || error?.status || 0);
+  if ([403, 408, 410, 429, 500, 502, 503, 504].includes(statusCode)) {
+    return true;
+  }
+
+  const message = readText(error?.message).toLowerCase();
+  return (
+    message.includes("status code: 410") ||
+    message.includes("status code: 429") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("extract functions") ||
+    message.includes("decipher") ||
+    message.includes("429")
+  );
+}
+
+function clearYtdlCaches() {
+  try {
+    ytdl?.cache?.info?.clear?.();
+  } catch (_error) {
+    // noop
+  }
+  try {
+    ytdl?.cache?.watch?.clear?.();
+  } catch (_error) {
+    // noop
+  }
+}
+
+function toFriendlyYoutubeErrorMessage(error) {
+  const statusCode = Number(error?.statusCode || error?.status || 0);
+  const rawMessage = readText(error?.message || "Falha ao consultar YouTube.");
+  const lower = rawMessage.toLowerCase();
+
+  if (statusCode === 410 || lower.includes("status code: 410")) {
+    return "YouTube retornou 410 para este video. O servidor tentou fallback automaticamente, mas nao conseguiu liberar os formatos agora.";
+  }
+  if (statusCode === 429 || lower.includes("status code: 429")) {
+    return "YouTube limitou as requisicoes (429). Aguarde alguns minutos e tente novamente.";
+  }
+  if (rawMessage.includes("Could not extract functions")) {
+    return "O parser de formatos do YouTube falhou ao extrair funcoes de assinatura.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "Tempo excedido ao consultar YouTube.";
+  }
+  return rawMessage;
 }
 
 function extractFormatHeight(format) {
@@ -196,16 +311,38 @@ async function getYoutubeInfo(normalizedUrl) {
     return cacheEntry.info;
   }
 
-  const info = await withTimeout(
-    ytdl.getInfo(normalizedUrl),
-    YOUTUBE_INFO_TIMEOUT_MS,
-    "Tempo excedido ao consultar YouTube."
-  );
-  youtubeInfoCache.set(videoId, {
-    info,
-    expiresAt: Date.now() + YOUTUBE_INFO_CACHE_TTL_MS
-  });
-  return info;
+  const canonicalUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  const triedUrls = [normalizedUrl];
+  if (canonicalUrl !== normalizedUrl) {
+    triedUrls.push(canonicalUrl);
+  }
+
+  let lastError = null;
+
+  for (const targetUrl of triedUrls) {
+    for (const attempt of YTDL_CLIENT_ATTEMPTS) {
+      try {
+        const info = await withTimeout(
+          ytdl.getInfo(targetUrl, buildYtdlInfoOptions(attempt.options)),
+          YOUTUBE_INFO_TIMEOUT_MS,
+          "Tempo excedido ao consultar YouTube."
+        );
+        youtubeInfoCache.set(videoId, {
+          info,
+          expiresAt: Date.now() + YOUTUBE_INFO_CACHE_TTL_MS
+        });
+        return info;
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableYoutubeError(error)) {
+          throw new Error(toFriendlyYoutubeErrorMessage(error));
+        }
+        clearYtdlCaches();
+      }
+    }
+  }
+
+  throw new Error(toFriendlyYoutubeErrorMessage(lastError));
 }
 
 async function getYoutubeFormatsForUrl(urlRaw) {
@@ -218,7 +355,7 @@ async function getYoutubeFormatsForUrl(urlRaw) {
   }
 
   const info = await getYoutubeInfo(normalizedUrl);
-  const videoId = readText(info?.videoDetails?.videoId);
+  const videoId = readText(info?.videoDetails?.videoId || extractVideoIdFromYoutubeUrl(normalizedUrl));
   const title = readText(info?.videoDetails?.title, "Video do YouTube");
   const durationSeconds = parseInteger(info?.videoDetails?.lengthSeconds, 0);
   const durationLabel = formatDurationLabel(durationSeconds);
@@ -263,6 +400,9 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
   if (!format) {
     throw new Error("Formato selecionado nao encontrado. Atualize a lista de qualidades.");
   }
+  if (!readText(format?.url)) {
+    throw new Error("Formato selecionado esta temporariamente indisponivel no YouTube. Escolha outra qualidade.");
+  }
 
   const title = readText(info?.videoDetails?.title, "youtube-video");
   const qualityLabel = readText(format?.qualityLabel, `itag-${selectedItag}`);
@@ -281,4 +421,3 @@ module.exports = {
   getYoutubeFormatsForUrl,
   resolveDownloadTarget
 };
-

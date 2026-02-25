@@ -265,6 +265,51 @@ function normalizeUrlInput(value: string): string {
   return raw;
 }
 
+function isSupportedYoutubeUrl(value: string): boolean {
+  const raw = normalizeUrlInput(value);
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    const host = String(parsed.hostname || "").toLowerCase();
+    return [
+      "youtube.com",
+      "www.youtube.com",
+      "m.youtube.com",
+      "music.youtube.com",
+      "youtu.be",
+      "www.youtu.be"
+    ].includes(host);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function extractYoutubeVideoId(value: string): string {
+  const raw = normalizeUrlInput(value);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    const host = String(parsed.hostname || "").toLowerCase();
+    if (host.includes("youtu.be")) {
+      const shortId = String(parsed.pathname || "").replace(/^\/+|\/+$/g, "");
+      return /^[a-zA-Z0-9_-]{6,}$/.test(shortId) ? shortId : "";
+    }
+    if (host.includes("youtube.com")) {
+      const byQuery = String(parsed.searchParams.get("v") || "").trim();
+      if (/^[a-zA-Z0-9_-]{6,}$/.test(byQuery)) {
+        return byQuery;
+      }
+      const byPath = String(parsed.pathname || "").match(/\/embed\/([a-zA-Z0-9_-]{6,})/)?.[1] || "";
+      if (/^[a-zA-Z0-9_-]{6,}$/.test(byPath)) {
+        return byPath;
+      }
+    }
+  } catch (_error) {
+    return "";
+  }
+  return "";
+}
+
 function normalizeMediaPathInput(value: string): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -967,6 +1012,9 @@ export function AdminAppClient() {
   const formRef = useRef<HTMLFormElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const archiveDragDepthRef = useRef(0);
+  const youtubeAutoLoadTimerRef = useRef<number | null>(null);
+  const youtubeLastLoadedUrlRef = useRef("");
+  const youtubeRequestSeqRef = useRef(0);
 
   const suggestedId = useMemo(() => normalizeId(form.name), [form.name]);
   const resolvedId = useMemo(() => normalizeId(form.id || suggestedId), [form.id, suggestedId]);
@@ -1701,18 +1749,38 @@ export function AdminAppClient() {
     setYoutubeError("");
   }
 
-  async function loadYoutubeQualityOptions() {
-    const normalizedUrl = normalizeUrlInput(youtubeUrlInput);
-    if (!normalizedUrl) {
+  async function loadYoutubeQualityOptions(urlOverride?: string) {
+    const normalizedUrl = normalizeUrlInput(urlOverride ?? youtubeUrlInput);
+    if (!normalizedUrl || !isSupportedYoutubeUrl(normalizedUrl)) {
       setYoutubeError("Cole um link valido do YouTube.");
       return;
     }
 
+    const requestId = youtubeRequestSeqRef.current + 1;
+    youtubeRequestSeqRef.current = requestId;
+    const isSameUrl = youtubeLastLoadedUrlRef.current === normalizedUrl;
+    const previewVideoId = extractYoutubeVideoId(normalizedUrl);
+
     setYoutubeLoading(true);
     setYoutubeError("");
-    setYoutubeVideoMeta(null);
-    setYoutubeQualityOptions([]);
-    setYoutubeSelectedItag("");
+    if (!isSameUrl) {
+      if (previewVideoId) {
+        setYoutubeVideoMeta((prev) => {
+          if (prev?.videoId === previewVideoId) return prev;
+          return {
+            videoId: previewVideoId,
+            title: "Carregando dados do video...",
+            durationSeconds: 0,
+            durationLabel: "",
+            thumbnailUrl: `https://i.ytimg.com/vi/${previewVideoId}/hqdefault.jpg`
+          };
+        });
+      } else {
+        setYoutubeVideoMeta(null);
+      }
+      setYoutubeQualityOptions([]);
+      setYoutubeSelectedItag("");
+    }
 
     try {
       const response = await fetchApiWithTimeout(
@@ -1720,6 +1788,9 @@ export function AdminAppClient() {
         {},
         22000
       );
+      if (requestId !== youtubeRequestSeqRef.current) {
+        return;
+      }
       const json = (await response.json().catch(() => null)) as {
         ok?: boolean;
         video?: YoutubeVideoMeta;
@@ -1741,10 +1812,16 @@ export function AdminAppClient() {
       setYoutubeQualityOptions(options);
       const preferred = options.find((entry) => entry.hasAudio) || options[0];
       setYoutubeSelectedItag(String(preferred?.itag || ""));
+      youtubeLastLoadedUrlRef.current = normalizedUrl;
     } catch (error) {
+      if (requestId !== youtubeRequestSeqRef.current) {
+        return;
+      }
       setYoutubeError(error instanceof Error ? error.message : "Falha ao buscar qualidades do YouTube.");
     } finally {
-      setYoutubeLoading(false);
+      if (requestId === youtubeRequestSeqRef.current) {
+        setYoutubeLoading(false);
+      }
     }
   }
 
@@ -1894,6 +1971,61 @@ export function AdminAppClient() {
     if (!viewer.authenticated || !viewer.isAdmin) return;
     void loadDashboardBootstrap();
   }, [viewer.authenticated, viewer.isAdmin]);
+
+  useEffect(() => {
+    return () => {
+      if (youtubeAutoLoadTimerRef.current !== null) {
+        window.clearTimeout(youtubeAutoLoadTimerRef.current);
+        youtubeAutoLoadTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isYoutubeModalOpen) return;
+    const previewVideoId = extractYoutubeVideoId(youtubeUrlInput);
+    if (!previewVideoId) return;
+    setYoutubeVideoMeta((prev) => {
+      if (prev?.videoId === previewVideoId) return prev;
+      return {
+        videoId: previewVideoId,
+        title: "Carregando dados do video...",
+        durationSeconds: 0,
+        durationLabel: "",
+        thumbnailUrl: `https://i.ytimg.com/vi/${previewVideoId}/hqdefault.jpg`
+      };
+    });
+  }, [isYoutubeModalOpen, youtubeUrlInput]);
+
+  useEffect(() => {
+    if (!isYoutubeModalOpen) return;
+    const normalizedUrl = normalizeUrlInput(youtubeUrlInput);
+    if (!normalizedUrl || !isSupportedYoutubeUrl(normalizedUrl)) return;
+    if (youtubeLoading || youtubeDownloading) return;
+    if (youtubeLastLoadedUrlRef.current === normalizedUrl && youtubeQualityOptions.length > 0) return;
+
+    if (youtubeAutoLoadTimerRef.current !== null) {
+      window.clearTimeout(youtubeAutoLoadTimerRef.current);
+      youtubeAutoLoadTimerRef.current = null;
+    }
+
+    youtubeAutoLoadTimerRef.current = window.setTimeout(() => {
+      void loadYoutubeQualityOptions(normalizedUrl);
+    }, 450);
+
+    return () => {
+      if (youtubeAutoLoadTimerRef.current !== null) {
+        window.clearTimeout(youtubeAutoLoadTimerRef.current);
+        youtubeAutoLoadTimerRef.current = null;
+      }
+    };
+  }, [
+    isYoutubeModalOpen,
+    youtubeUrlInput,
+    youtubeLoading,
+    youtubeDownloading,
+    youtubeQualityOptions.length
+  ]);
 
   useEffect(() => {
     const normalizedInput = normalizeUrlInput(form.steamUrl);
@@ -3320,7 +3452,10 @@ export function AdminAppClient() {
               <span>Link do YouTube</span>
               <input
                 disabled={youtubeLoading || youtubeDownloading}
-                onChange={(event) => setYoutubeUrlInput(event.target.value)}
+                onChange={(event) => {
+                  setYoutubeUrlInput(event.target.value);
+                  if (youtubeError) setYoutubeError("");
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
