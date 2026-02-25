@@ -2548,7 +2548,7 @@ export function AdminAppClient() {
               return (
                 <article className="game-card-shell" key={game.id}>
                   <button
-                    className="game-card"
+                    className="game-card game-card-poster"
                     disabled={!canEditGames}
                     onClick={() => openEditor(game)}
                     type="button"
@@ -2567,32 +2567,12 @@ export function AdminAppClient() {
                         />
                       ) : null}
                       <span className={`game-card-fallback ${cover ? "" : "is-visible"}`}>Sem imagem</span>
+                      <div className="game-card-overlay">
+                        <strong>{game.name || "Sem nome"}</strong>
+                        <span>{game.id}</span>
+                      </div>
                     </div>
                   </button>
-                  <div className="game-card-body is-visible">
-                    <strong>{game.name || "Sem nome"}</strong>
-                    <span>{game.id}</span>
-                    <div className="game-card-actions">
-                      <button
-                        className="button button-ghost button-small"
-                        disabled={!canEditGames}
-                        onClick={() => openEditor(game)}
-                        type="button"
-                      >
-                        Editar
-                      </button>
-                      {canRemoveGames ? (
-                        <button
-                          className="button button-danger button-small"
-                          disabled={isRemovingGame}
-                          onClick={() => requestGameRemoval(game)}
-                          type="button"
-                        >
-                          Remover
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
                 </article>
               );
             })}
