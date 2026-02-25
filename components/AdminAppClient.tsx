@@ -125,29 +125,6 @@ type FormState = {
   enabled: boolean;
 };
 
-type YoutubeVideoMeta = {
-  videoId: string;
-  title: string;
-  durationSeconds: number;
-  durationLabel: string;
-  thumbnailUrl: string;
-};
-
-type YoutubeQualityOption = {
-  itag: number;
-  qualityLabel: string;
-  fps: number;
-  container: string;
-  hasAudio: boolean;
-  hasVideo: boolean;
-  bitrate: number;
-  height: number;
-  estimatedBytes: number;
-  estimatedSizeLabel: string;
-  source?: string;
-  downloadUrl?: string;
-};
-
 type EditorDraft = {
   form: FormState;
   genreInput: string;
@@ -266,51 +243,6 @@ function normalizeUrlInput(value: string): string {
   if (/^https?:\/\//i.test(raw) || raw.startsWith("/")) return raw;
   if (/^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(raw)) return `https://${raw}`;
   return raw;
-}
-
-function isSupportedYoutubeUrl(value: string): boolean {
-  const raw = normalizeUrlInput(value);
-  if (!raw) return false;
-  try {
-    const parsed = new URL(raw);
-    const host = String(parsed.hostname || "").toLowerCase();
-    return [
-      "youtube.com",
-      "www.youtube.com",
-      "m.youtube.com",
-      "music.youtube.com",
-      "youtu.be",
-      "www.youtu.be"
-    ].includes(host);
-  } catch (_error) {
-    return false;
-  }
-}
-
-function extractYoutubeVideoId(value: string): string {
-  const raw = normalizeUrlInput(value);
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    const host = String(parsed.hostname || "").toLowerCase();
-    if (host.includes("youtu.be")) {
-      const shortId = String(parsed.pathname || "").replace(/^\/+|\/+$/g, "");
-      return /^[a-zA-Z0-9_-]{6,}$/.test(shortId) ? shortId : "";
-    }
-    if (host.includes("youtube.com")) {
-      const byQuery = String(parsed.searchParams.get("v") || "").trim();
-      if (/^[a-zA-Z0-9_-]{6,}$/.test(byQuery)) {
-        return byQuery;
-      }
-      const byPath = String(parsed.pathname || "").match(/\/embed\/([a-zA-Z0-9_-]{6,})/)?.[1] || "";
-      if (/^[a-zA-Z0-9_-]{6,}$/.test(byPath)) {
-        return byPath;
-      }
-    }
-  } catch (_error) {
-    return "";
-  }
-  return "";
 }
 
 function normalizeMediaPathInput(value: string): string {
@@ -664,20 +596,6 @@ function formatTimestamp(value: string): string {
   return date.toLocaleString("pt-BR");
 }
 
-function buildYoutubeQualityOptionLabel(option: YoutubeQualityOption): string {
-  const parts: string[] = [];
-  const quality = String(option?.qualityLabel || "").trim();
-  parts.push(quality || `itag ${option?.itag}`);
-  if (Number(option?.fps) > 0) {
-    parts.push(`${option.fps}fps`);
-  }
-  if (String(option?.estimatedSizeLabel || "").trim()) {
-    parts.push(option.estimatedSizeLabel);
-  }
-  parts.push(option?.hasAudio ? "MP4 com audio" : "MP4 sem audio");
-  return parts.join(" • ");
-}
-
 function normalizeMaintenanceFlag(payload: unknown): MaintenanceFlag {
   const row = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
   const dataRaw = row.data;
@@ -968,14 +886,6 @@ export function AdminAppClient() {
   const [maintenanceTitleDraft, setMaintenanceTitleDraft] = useState(DEFAULT_MAINTENANCE_FLAG.title);
   const [maintenanceMessageDraft, setMaintenanceMessageDraft] = useState(DEFAULT_MAINTENANCE_FLAG.message);
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
-  const [isYoutubeModalOpen, setIsYoutubeModalOpen] = useState(false);
-  const [youtubeUrlInput, setYoutubeUrlInput] = useState("");
-  const [youtubeVideoMeta, setYoutubeVideoMeta] = useState<YoutubeVideoMeta | null>(null);
-  const [youtubeQualityOptions, setYoutubeQualityOptions] = useState<YoutubeQualityOption[]>([]);
-  const [youtubeSelectedItag, setYoutubeSelectedItag] = useState("");
-  const [youtubeLoading, setYoutubeLoading] = useState(false);
-  const [youtubeDownloading, setYoutubeDownloading] = useState(false);
-  const [youtubeError, setYoutubeError] = useState("");
 
   const [view, setView] = useState<"catalog" | "editor">("catalog");
   const [dashboardSection, setDashboardSection] = useState<"inicio" | "jogos" | "administracao">("inicio");
@@ -1015,9 +925,6 @@ export function AdminAppClient() {
   const formRef = useRef<HTMLFormElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const archiveDragDepthRef = useRef(0);
-  const youtubeAutoLoadTimerRef = useRef<number | null>(null);
-  const youtubeLastLoadedUrlRef = useRef("");
-  const youtubeRequestSeqRef = useRef(0);
   const noticeHideTimerRef = useRef<number | null>(null);
   const noticeHoveredRef = useRef(false);
 
@@ -1153,15 +1060,6 @@ export function AdminAppClient() {
   const viewerDisplayName = String(viewer.user?.displayName || "Steam User").trim() || "Steam User";
   const viewerSteamId = String(viewer.user?.steamId || "").trim();
   const viewerAvatarInitial = viewerDisplayName.slice(0, 1).toUpperCase() || "U";
-  const normalizedYoutubeUrlInput = useMemo(() => normalizeUrlInput(youtubeUrlInput), [youtubeUrlInput]);
-  const canDownloadYoutubeWithAutoFallback = useMemo(
-    () => Boolean(normalizedYoutubeUrlInput && isSupportedYoutubeUrl(normalizedYoutubeUrlInput)),
-    [normalizedYoutubeUrlInput]
-  );
-  const selectedYoutubeQuality = useMemo(
-    () => youtubeQualityOptions.find((option) => String(option.itag) === youtubeSelectedItag) || null,
-    [youtubeQualityOptions, youtubeSelectedItag]
-  );
 
   function clearNoticeHideTimer() {
     if (noticeHideTimerRef.current !== null) {
@@ -1781,144 +1679,6 @@ export function AdminAppClient() {
     }
   }
 
-  function openYoutubeModal() {
-    setIsYoutubeModalOpen(true);
-    setYoutubeError("");
-  }
-
-  function closeYoutubeModal() {
-    if (youtubeLoading || youtubeDownloading) {
-      return;
-    }
-    setIsYoutubeModalOpen(false);
-    setYoutubeError("");
-  }
-
-  async function loadYoutubeQualityOptions(urlOverride?: string) {
-    const normalizedUrl = normalizeUrlInput(urlOverride ?? youtubeUrlInput);
-    if (!normalizedUrl || !isSupportedYoutubeUrl(normalizedUrl)) {
-      setYoutubeError("Cole um link valido do YouTube.");
-      return;
-    }
-
-    const requestId = youtubeRequestSeqRef.current + 1;
-    youtubeRequestSeqRef.current = requestId;
-    const isSameUrl = youtubeLastLoadedUrlRef.current === normalizedUrl;
-    const previewVideoId = extractYoutubeVideoId(normalizedUrl);
-
-    setYoutubeLoading(true);
-    setYoutubeError("");
-    if (!isSameUrl) {
-      if (previewVideoId) {
-        setYoutubeVideoMeta((prev) => {
-          if (prev?.videoId === previewVideoId) return prev;
-          return {
-            videoId: previewVideoId,
-            title: "Carregando dados do video...",
-            durationSeconds: 0,
-            durationLabel: "",
-            thumbnailUrl: `https://i.ytimg.com/vi/${previewVideoId}/hqdefault.jpg`
-          };
-        });
-      } else {
-        setYoutubeVideoMeta(null);
-      }
-      setYoutubeQualityOptions([]);
-      setYoutubeSelectedItag("");
-    }
-
-    try {
-      const response = await fetchApiWithTimeout(
-        `/api/tools/youtube/formats?url=${encodeURIComponent(normalizedUrl)}`,
-        {},
-        22000
-      );
-      if (requestId !== youtubeRequestSeqRef.current) {
-        return;
-      }
-      const json = (await response.json().catch(() => null)) as {
-        ok?: boolean;
-        video?: YoutubeVideoMeta;
-        formats?: YoutubeQualityOption[];
-        warning?: string;
-        sourceMode?: string;
-        message?: string;
-        error?: string;
-      } | null;
-
-      if (!response.ok || !json?.ok) {
-        throw new Error(json?.message || json?.error || `Falha ao ler qualidades (${response.status}).`);
-      }
-
-      const options = Array.isArray(json.formats) ? json.formats : [];
-      if (!options.length) {
-        throw new Error("Nenhuma qualidade MP4 disponivel para esse video.");
-      }
-
-      setYoutubeVideoMeta(json.video || null);
-      setYoutubeQualityOptions(options);
-      const preferred = options.find((entry) => entry.hasAudio) || options[0];
-      setYoutubeSelectedItag(String(preferred?.itag || ""));
-      const warning = String(json?.warning || "").trim();
-      if (warning) {
-        setNoticeState(warning, false);
-      }
-      youtubeLastLoadedUrlRef.current = normalizedUrl;
-    } catch (error) {
-      if (requestId !== youtubeRequestSeqRef.current) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : "Falha ao buscar qualidades do YouTube.";
-      const lower = String(message || "").toLowerCase();
-      if (lower.includes("anti-bot") || lower.includes("status code: 410") || lower.includes("not a bot")) {
-        setYoutubeError("YouTube bloqueou a listagem completa agora. Voce ainda pode baixar em modo padrao (preferencia 720p).");
-      } else {
-        setYoutubeError(message);
-      }
-    } finally {
-      if (requestId === youtubeRequestSeqRef.current) {
-        setYoutubeLoading(false);
-      }
-    }
-  }
-
-  function downloadSelectedYoutubeVideo() {
-    const normalizedUrl = normalizedYoutubeUrlInput;
-    if (!normalizedUrl || !isSupportedYoutubeUrl(normalizedUrl)) {
-      setYoutubeError("Cole um link valido do YouTube.");
-      return;
-    }
-
-    setYoutubeDownloading(true);
-    setYoutubeError("");
-    try {
-      const directDownloadUrl = String(selectedYoutubeQuality?.downloadUrl || "").trim();
-      const selectedItagParam = String(youtubeSelectedItag || "").trim();
-      const serverDownloadUrl = selectedItagParam
-        ? `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(selectedItagParam)}`
-        : `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}`;
-      const downloadUrl = directDownloadUrl
-        ? directDownloadUrl
-        : serverDownloadUrl;
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.rel = "noopener noreferrer";
-      if (directDownloadUrl) {
-        anchor.target = "_blank";
-      }
-      anchor.style.display = "none";
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      const selectedLabel = selectedYoutubeQuality
-        ? buildYoutubeQualityOptionLabel(selectedYoutubeQuality)
-        : "modo padrao (preferencia 720p)";
-      setNoticeState(`Download iniciado (${selectedLabel}).`, false);
-    } finally {
-      setYoutubeDownloading(false);
-    }
-  }
-
   async function saveMaintenanceFlag(next: {
     enabled?: boolean;
     title?: string;
@@ -2051,61 +1811,6 @@ export function AdminAppClient() {
     if (!viewer.authenticated || !viewer.isAdmin) return;
     void loadDashboardBootstrap();
   }, [viewer.authenticated, viewer.isAdmin]);
-
-  useEffect(() => {
-    return () => {
-      if (youtubeAutoLoadTimerRef.current !== null) {
-        window.clearTimeout(youtubeAutoLoadTimerRef.current);
-        youtubeAutoLoadTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isYoutubeModalOpen) return;
-    const previewVideoId = extractYoutubeVideoId(youtubeUrlInput);
-    if (!previewVideoId) return;
-    setYoutubeVideoMeta((prev) => {
-      if (prev?.videoId === previewVideoId) return prev;
-      return {
-        videoId: previewVideoId,
-        title: "Carregando dados do video...",
-        durationSeconds: 0,
-        durationLabel: "",
-        thumbnailUrl: `https://i.ytimg.com/vi/${previewVideoId}/hqdefault.jpg`
-      };
-    });
-  }, [isYoutubeModalOpen, youtubeUrlInput]);
-
-  useEffect(() => {
-    if (!isYoutubeModalOpen) return;
-    const normalizedUrl = normalizeUrlInput(youtubeUrlInput);
-    if (!normalizedUrl || !isSupportedYoutubeUrl(normalizedUrl)) return;
-    if (youtubeLoading || youtubeDownloading) return;
-    if (youtubeLastLoadedUrlRef.current === normalizedUrl && youtubeQualityOptions.length > 0) return;
-
-    if (youtubeAutoLoadTimerRef.current !== null) {
-      window.clearTimeout(youtubeAutoLoadTimerRef.current);
-      youtubeAutoLoadTimerRef.current = null;
-    }
-
-    youtubeAutoLoadTimerRef.current = window.setTimeout(() => {
-      void loadYoutubeQualityOptions(normalizedUrl);
-    }, 450);
-
-    return () => {
-      if (youtubeAutoLoadTimerRef.current !== null) {
-        window.clearTimeout(youtubeAutoLoadTimerRef.current);
-        youtubeAutoLoadTimerRef.current = null;
-      }
-    };
-  }, [
-    isYoutubeModalOpen,
-    youtubeUrlInput,
-    youtubeLoading,
-    youtubeDownloading,
-    youtubeQualityOptions.length
-  ]);
 
   useEffect(() => {
     const normalizedInput = normalizeUrlInput(form.steamUrl);
@@ -2668,7 +2373,6 @@ export function AdminAppClient() {
   function changeDashboardSection(next: "inicio" | "jogos" | "administracao") {
     if (next === dashboardSection) return;
     setIsUserMenuOpen(false);
-    setIsYoutubeModalOpen(false);
     if (next !== "jogos" && view === "editor") {
       if (!confirmDiscardChanges()) return;
       resetEditor();
@@ -2757,15 +2461,6 @@ export function AdminAppClient() {
             </button>
           </nav>
 
-          <div className="dashboard-sidebar-tools">
-            <button
-              className="dashboard-nav-item dashboard-nav-tool"
-              onClick={openYoutubeModal}
-              type="button"
-            >
-              Baixar video YouTube
-            </button>
-          </div>
         </aside>
 
         <section className="dashboard-content">
@@ -3240,7 +2935,7 @@ export function AdminAppClient() {
                     <label><span>launch_executable</span><input onChange={(event) => updateField("launchExecutable", event.target.value)} placeholder="Jogo.exe" value={form.launchExecutable} /></label>
                     <label><span>banner_url</span><input onChange={(event) => updateField("bannerUrl", event.target.value)} placeholder="https://.../banner.png" type="url" value={form.bannerUrl} /></label>
                     <label><span>logo_url</span><input onChange={(event) => updateField("logoUrl", event.target.value)} placeholder="https://.../logo.png" type="url" value={form.logoUrl} /></label>
-                    <label><span>trailer_url</span><input onChange={(event) => updateField("trailerUrl", event.target.value)} placeholder="https://youtube.com/..." type="url" value={form.trailerUrl} /></label>
+                    <label><span>trailer_url</span><input onChange={(event) => updateField("trailerUrl", event.target.value)} placeholder="https://..." type="url" value={form.trailerUrl} /></label>
                     <label><span>developed_by</span><input onChange={(event) => updateField("developedBy", event.target.value)} value={form.developedBy} /></label>
                     <label><span>published_by</span><input onChange={(event) => updateField("publishedBy", event.target.value)} value={form.publishedBy} /></label>
                     <label>
@@ -3521,107 +3216,6 @@ export function AdminAppClient() {
         </section>
       </div>
 
-      {isYoutubeModalOpen ? (
-        <aside className="confirm-overlay" onClick={closeYoutubeModal} role="dialog">
-          <article className="card confirm-card youtube-modal-card" onClick={(event) => event.stopPropagation()}>
-            <p className="kicker">FERRAMENTA</p>
-            <h3>Baixar video do YouTube</h3>
-            <p className="text-muted">Cole o link. Se as qualidades falharem, o download usa modo padrao com preferencia 720p.</p>
-
-            <label className="compact-field">
-              <span>Link do YouTube</span>
-              <input
-                disabled={youtubeLoading || youtubeDownloading}
-                onChange={(event) => {
-                  setYoutubeUrlInput(event.target.value);
-                  if (youtubeError) setYoutubeError("");
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void loadYoutubeQualityOptions();
-                  }
-                }}
-                placeholder="https://www.youtube.com/watch?v=..."
-                value={youtubeUrlInput}
-              />
-            </label>
-
-            <div className="youtube-modal-actions">
-              <button
-                className="button button-secondary button-small"
-                disabled={youtubeLoading || youtubeDownloading}
-                onClick={() => void loadYoutubeQualityOptions()}
-                type="button"
-              >
-                {youtubeLoading ? "Carregando qualidades..." : "Carregar qualidades (opcional)"}
-              </button>
-            </div>
-
-            {youtubeVideoMeta ? (
-              <div className="youtube-video-preview">
-                {youtubeVideoMeta.thumbnailUrl ? (
-                  <img
-                    alt={youtubeVideoMeta.title || "Thumbnail do video"}
-                    className="youtube-video-thumb"
-                    src={youtubeVideoMeta.thumbnailUrl}
-                  />
-                ) : null}
-                <div className="youtube-video-meta">
-                  <strong>{youtubeVideoMeta.title || "Video do YouTube"}</strong>
-                  <span>{youtubeVideoMeta.durationLabel || "-"}</span>
-                </div>
-              </div>
-            ) : null}
-
-            {youtubeQualityOptions.length > 0 ? (
-              <label className="compact-field">
-                <span>Qualidade MP4 (opcional)</span>
-                <select
-                  disabled={youtubeLoading || youtubeDownloading}
-                  onChange={(event) => setYoutubeSelectedItag(event.target.value)}
-                  value={youtubeSelectedItag}
-                >
-                  {youtubeQualityOptions.map((option) => (
-                    <option key={option.itag} value={String(option.itag)}>
-                      {buildYoutubeQualityOptionLabel(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {youtubeQualityOptions.length === 0 && canDownloadYoutubeWithAutoFallback ? (
-              <p className="text-muted">Sem lista de qualidades no momento. O sistema baixa em modo padrao (preferencia 720p).</p>
-            ) : null}
-
-            {youtubeError ? <p className="inline-alert is-warning">{youtubeError}</p> : null}
-
-            <div className="confirm-actions">
-              <button
-                className="button button-ghost"
-                disabled={youtubeLoading || youtubeDownloading}
-                onClick={closeYoutubeModal}
-                type="button"
-              >
-                Fechar
-              </button>
-              <button
-                className="button button-primary"
-                disabled={youtubeLoading || youtubeDownloading || !canDownloadYoutubeWithAutoFallback}
-                onClick={downloadSelectedYoutubeVideo}
-                type="button"
-              >
-                {youtubeDownloading
-                  ? "Iniciando..."
-                  : youtubeQualityOptions.length > 0
-                    ? "Baixar MP4"
-                    : "Baixar MP4 (Auto 720p)"}
-              </button>
-            </div>
-          </article>
-        </aside>
-      ) : null}
-
       {isMaintenanceModalOpen ? (
         <aside className="confirm-overlay" onClick={() => setIsMaintenanceModalOpen(false)} role="dialog">
           <article className="card confirm-card maintenance-modal-card" onClick={(event) => event.stopPropagation()}>
@@ -3899,3 +3493,4 @@ export function AdminAppClient() {
     </main>
   );
 }
+

@@ -9,7 +9,6 @@
     "start": "next start -p 4080"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
