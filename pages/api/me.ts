@@ -1,5 +1,5 @@
 // @ts-nocheck
-const { buildViewerFromRequest, clearAuthCookie } = require("../../src/auth-core");
+const { buildViewerFromRequest, setAuthCookie, clearAuthCookie } = require("../../src/auth-core");
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -12,7 +12,9 @@ export default async function handler(req, res) {
 
   try {
     const viewer = await buildViewerFromRequest(req);
-    if (!viewer.authenticated) {
+    if (viewer.authenticated && viewer.user?.steamId) {
+      setAuthCookie(res, req, viewer.user);
+    } else {
       clearAuthCookie(res, req);
     }
     res.status(200).json(viewer);

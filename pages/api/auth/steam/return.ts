@@ -8,6 +8,7 @@ const {
   clearSteamStateCookie,
   verifySteamOpenIdAssertion,
   extractSteamIdFromClaimedId,
+  fetchSteamProfileBySteamId,
   setAuthCookie,
   clearAuthCookie
 } = require("../../../../src/auth-core");
@@ -66,10 +67,11 @@ export default async function handler(req, res) {
       return;
     }
 
+    const steamProfile = await fetchSteamProfileBySteamId(steamId);
     setAuthCookie(res, req, {
       steamId,
-      displayName: steamId,
-      avatar: ""
+      displayName: readText(steamProfile?.displayName, steamId),
+      avatar: readText(steamProfile?.avatar)
     });
     res.redirect(302, "/?login=ok");
   } catch (_error) {
