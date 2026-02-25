@@ -715,7 +715,9 @@ async function buildViewerFromRequest(req) {
     const remote = await fetchAdminFromSupabase(user.steamId);
     adminStorage = remote.mode;
     if (remote.error) {
-      adminError = remote.error;
+      if (!bootstrapRole) {
+        adminError = remote.error;
+      }
     } else if (remote.admin) {
       isAdmin = true;
       resolvedRole = remote.admin.staffRole;

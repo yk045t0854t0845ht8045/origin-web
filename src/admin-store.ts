@@ -207,6 +207,22 @@ function createAdminStore(config, db) {
   const useSupabase = !isLocalProvider && (providerRaw === "supabase" || (providerRaw === "auto" && remoteConfigured));
   const mode = useSupabase ? "supabase" : "local";
 
+  function listLocalSnapshot() {
+    try {
+      return db.listAdmins();
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function getLocalAdminSnapshot(steamId) {
+    try {
+      return db.getAdminBySteamId(steamId);
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function syncLocalSnapshot(admins) {
     if (!Array.isArray(admins)) {
       return;
@@ -324,27 +340,51 @@ function createAdminStore(config, db) {
         "[ADMINS_SUPABASE_NOT_CONFIGURED] Defina SUPABASE_URL e SUPABASE_ANON_KEY (ou SUPABASE_SERVICE_ROLE_KEY) para usar admins no Supabase."
       );
     }
-    await insertMissingBootstrapAdmins(config.bootstrapAdmins);
-    const admins = await fetchRemoteAdmins();
-    syncLocalSnapshot(admins);
+    try {
+      await insertMissingBootstrapAdmins(config.bootstrapAdmins);
+      const admins = await fetchRemoteAdmins();
+      syncLocalSnapshot(admins);
+    } catch (error) {
+      if (!listLocalSnapshot().length) {
+        throw error;
+      }
+      console.warn("[origin-web-admin] fallback para snapshot local de admins durante initialize:", String(error?.message || error));
+    }
   }
 
   async function listAdmins() {
     if (mode === "local") {
       return db.listAdmins();
     }
-    const admins = await fetchRemoteAdmins();
-    syncLocalSnapshot(admins);
-    return admins;
+    try {
+      const admins = await fetchRemoteAdmins();
+      syncLocalSnapshot(admins);
+      return admins;
+    } catch (error) {
+      const fallback = listLocalSnapshot();
+      if (fallback.length) {
+        console.warn("[origin-web-admin] listAdmins usando snapshot local:", String(error?.message || error));
+        return fallback;
+      }
+      throw error;
+    }
   }
 
   async function countAdmins() {
     if (mode === "local") {
       return db.countAdmins();
     }
-    const admins = await fetchRemoteAdmins();
-    syncLocalSnapshot(admins);
-    return admins.length;
+    try {
+      const admins = await fetchRemoteAdmins();
+      syncLocalSnapshot(admins);
+      return admins.length;
+    } catch (error) {
+      const fallback = listLocalSnapshot();
+      if (fallback.length) {
+        return fallback.length;
+      }
+      throw error;
+    }
   }
 
   async function getAdminBySteamId(steamId) {
@@ -355,11 +395,20 @@ function createAdminStore(config, db) {
     if (mode === "local") {
       return db.getAdminBySteamId(normalizedSteamId);
     }
-    const admin = await getRemoteAdminBySteamId(normalizedSteamId);
-    if (admin) {
-      upsertLocalSnapshot(admin);
+    try {
+      const admin = await getRemoteAdminBySteamId(normalizedSteamId);
+      if (admin) {
+        upsertLocalSnapshot(admin);
+      }
+      return admin;
+    } catch (error) {
+      const fallback = getLocalAdminSnapshot(normalizedSteamId);
+      if (fallback) {
+        console.warn("[origin-web-admin] getAdminBySteamId usando snapshot local:", String(error?.message || error));
+        return fallback;
+      }
+      throw error;
     }
-    return admin;
   }
 
   async function isAdmin(steamId) {

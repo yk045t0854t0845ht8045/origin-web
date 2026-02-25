@@ -62,6 +62,13 @@ db.bootstrapAdmins(config.bootstrapAdmins);
 const adminStore = createAdminStore(config, db);
 const driveService = createDriveService(config);
 const steamProfileCache = new Map();
+const launcherGamesCache = {
+  data: [],
+  updatedAt: 0
+};
+let adminStoreReady = false;
+let adminStoreInitError = null;
+let adminStoreInitPromise = null;
 
 const isDev = process.env.NODE_ENV !== "production";
 const useSecureCookies = !isDev;
@@ -83,6 +90,30 @@ function getClearCookieOptions() {
     secure: useSecureCookies,
     path: "/"
   };
+}
+
+async function ensureAdminStoreReady() {
+  if (adminStoreReady) {
+    return;
+  }
+  if (adminStoreInitPromise) {
+    return adminStoreInitPromise;
+  }
+  adminStoreInitPromise = (async () => {
+    try {
+      if (adminStore && typeof adminStore.initialize === "function") {
+        await adminStore.initialize();
+      }
+      adminStoreReady = true;
+      adminStoreInitError = null;
+    } catch (error) {
+      adminStoreInitError = error;
+      throw error;
+    } finally {
+      adminStoreInitPromise = null;
+    }
+  })();
+  return adminStoreInitPromise;
 }
 
 function getSteamLoginState() {
@@ -398,6 +429,18 @@ function normalizeStaffRole(value, fallback = STAFF_ROLE.STAFF) {
   }
   return STAFF_ROLE.STAFF;
 }
+
+const bootstrapRoleBySteamId = (() => {
+  const map = new Map();
+  const entries = Array.isArray(config.bootstrapAdmins) ? config.bootstrapAdmins : [];
+  for (const entry of entries) {
+    const steamId = readText(entry?.steamId);
+    if (!isValidSteamId(steamId)) continue;
+    const role = normalizeStaffRole(entry?.staffRole || entry?.role, STAFF_ROLE.DEVELOPER);
+    map.set(steamId, role);
+  }
+  return map;
+})();
 
 function getRolePermissions(roleRaw) {
   const role = normalizeStaffRole(roleRaw, STAFF_ROLE.STAFF);
@@ -832,7 +875,10 @@ async function fetchLauncherGamesFromSupabase({ search = "", limit = 250 } = {})
   }
 
   const rows = Array.isArray(responsePayload) ? responsePayload : [];
-  return rows.map(normalizeLauncherGameRow).filter(Boolean);
+  const normalizedGames = rows.map(normalizeLauncherGameRow).filter(Boolean);
+  launcherGamesCache.data = normalizedGames;
+  launcherGamesCache.updatedAt = Date.now();
+  return normalizedGames;
 }
 
 async function fetchLauncherGameByIdFromSupabase(gameId) {
@@ -1191,22 +1237,52 @@ async function enrichAdminsWithSteamProfiles(admins = []) {
 async function buildViewer(req) {
   const isAuthenticated = Boolean(req.user && isValidSteamId(req.user.steamId));
   const steamId = isAuthenticated ? String(req.user.steamId || "").trim() : "";
-  let isAdmin = false;
+  const bootstrapRole = steamId ? readText(bootstrapRoleBySteamId.get(steamId)) : "";
+  let isAdmin = Boolean(bootstrapRole);
   let adminError = "";
+  let resolvedRole = bootstrapRole || "";
   let adminRecord = null;
 
   if (steamId) {
     try {
       adminRecord = await adminStore.getAdminBySteamId(steamId);
-      isAdmin = Boolean(adminRecord);
+      if (adminRecord) {
+        isAdmin = true;
+        resolvedRole = normalizeStaffRole(adminRecord?.staffRole, bootstrapRole || STAFF_ROLE.STAFF);
+      } else if (!bootstrapRole) {
+        isAdmin = false;
+        resolvedRole = "";
+      }
     } catch (error) {
-      adminError = error?.message || "Falha ao validar staff autorizado.";
-      isAdmin = false;
+      if (!bootstrapRole) {
+        adminError = error?.message || "Falha ao validar staff autorizado.";
+        isAdmin = false;
+        resolvedRole = "";
+      }
     }
   }
 
-  const role = isAdmin ? normalizeStaffRole(adminRecord?.staffRole, STAFF_ROLE.STAFF) : "";
+  const role = isAdmin ? normalizeStaffRole(resolvedRole, STAFF_ROLE.STAFF) : "";
   const permissions = isAdmin ? getRolePermissions(role) : getRolePermissions(STAFF_ROLE.STAFF);
+  let user = null;
+  if (isAuthenticated) {
+    user = {
+      steamId,
+      displayName: readText(req.user?.displayName, steamId),
+      avatar: readText(req.user?.avatar)
+    };
+    const needsProfileRefresh = !user.avatar || !user.displayName || user.displayName === steamId;
+    if (needsProfileRefresh) {
+      const profile = await fetchSteamProfileBySteamId(steamId);
+      if (profile) {
+        user = {
+          steamId,
+          displayName: readText(profile.displayName, steamId),
+          avatar: readText(profile.avatar)
+        };
+      }
+    }
+  }
 
   return {
     authenticated: isAuthenticated,
@@ -1214,13 +1290,7 @@ async function buildViewer(req) {
     adminError,
     role,
     permissions,
-    user: isAuthenticated
-      ? {
-          steamId,
-          displayName: String(req.user.displayName || steamId),
-          avatar: String(req.user.avatar || "")
-        }
-      : null
+    user
   };
 }
 
@@ -1374,6 +1444,33 @@ function createServer() {
 
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ extended: true }));
+  app.use((req, res, nextMiddleware) => {
+    void ensureAdminStoreReady()
+      .then(() => {
+        nextMiddleware();
+      })
+      .catch((error) => {
+        let hasLocalAdmins = false;
+        try {
+          hasLocalAdmins = typeof db.countAdmins === "function" && db.countAdmins() > 0;
+        } catch (_snapshotError) {
+          hasLocalAdmins = false;
+        }
+        if (hasLocalAdmins) {
+          console.warn(
+            "[origin-web-admin] adminStore.initialize falhou; mantendo operacao com snapshot local:",
+            String(error?.message || error)
+          );
+          adminStoreReady = true;
+          nextMiddleware();
+          return;
+        }
+        res.status(503).json({
+          error: "admin_store_init_failed",
+          message: String(error?.message || adminStoreInitError?.message || "Falha ao inicializar store de staffs.")
+        });
+      });
+  });
 
   app.use((req, res, nextMiddleware) => {
     if (req.user?.steamId) {
@@ -1978,6 +2075,18 @@ function createServer() {
         games
       });
     } catch (error) {
+      const staleGames = Array.isArray(launcherGamesCache.data) ? launcherGamesCache.data : [];
+      if (staleGames.length > 0) {
+        res.json({
+          ok: true,
+          total: staleGames.length,
+          games: staleGames,
+          stale: true,
+          staleUpdatedAt: launcherGamesCache.updatedAt ? new Date(launcherGamesCache.updatedAt).toISOString() : "",
+          warning: "Supabase indisponivel no momento. Exibindo cache local."
+        });
+        return;
+      }
       res.status(502).json({
         error: "list_launcher_games_failed",
         message: error?.message || "Falha ao carregar catalogo no Supabase."
