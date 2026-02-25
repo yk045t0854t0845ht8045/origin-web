@@ -97,6 +97,9 @@ Abra `http://localhost:4080`.
   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
   - `GOOGLE_DRIVE_KEY_FILE` **ou** `GOOGLE_SERVICE_ACCOUNT_JSON`.
 - Em serverless, uploads temporarios sao gravados em `/tmp`.
+- Se usar comandos customizados no painel da Vercel:
+  - `Install Command`: `npm install`
+  - `Build Command`: `npm run build`
 
 ## 5) Publicar o repositorio do site
 
