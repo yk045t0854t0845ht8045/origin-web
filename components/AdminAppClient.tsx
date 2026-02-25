@@ -90,6 +90,10 @@ type LauncherGame = {
   logoUrl?: string;
 };
 
+type CatalogRenderItem =
+  | { kind: "game"; game: LauncherGame }
+  | { kind: "placeholder"; dropIndex: number };
+
 type FormState = {
   id: string;
   name: string;
@@ -270,8 +274,29 @@ function normalizeImgurMediaUrl(value: string, fallbackExtension = ".png"): stri
   try {
     const parsed = new URL(raw);
     const host = parsed.hostname.toLowerCase();
-    if (!["imgur.com", "www.imgur.com", "m.imgur.com"].includes(host)) return raw;
-    const pathMatch = parsed.pathname.match(/^\/([a-z0-9]+)(\.[a-z0-9]+)?$/i);
+    if (!["imgur.com", "www.imgur.com", "m.imgur.com", "i.imgur.com"].includes(host)) return raw;
+
+    const pathSegments = String(parsed.pathname || "")
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (pathSegments.length === 0) return raw;
+
+    let candidate = "";
+    if (host === "i.imgur.com") {
+      candidate = pathSegments[0] || "";
+    } else if (pathSegments.length === 1) {
+      candidate = pathSegments[0] || "";
+    } else {
+      const prefix = String(pathSegments[0] || "").toLowerCase();
+      if (["gallery", "g"].includes(prefix)) {
+        candidate = pathSegments[1] || "";
+      } else {
+        return raw;
+      }
+    }
+
+    const pathMatch = candidate.match(/^([a-z0-9]+)(\.[a-z0-9]+)?$/i);
     if (!pathMatch?.[1]) return raw;
     const normalizedFallback = String(fallbackExtension || ".png").trim().startsWith(".")
       ? String(fallbackExtension || ".png").trim()
@@ -741,6 +766,35 @@ function coverUrl(game: LauncherGame): string {
   return coverCandidates(game)[0] || "";
 }
 
+function reorderGamesByDropIndex(games: LauncherGame[], draggedId: string, dropIndex: number): LauncherGame[] {
+  const normalizedDraggedId = String(draggedId || "").trim();
+  if (!normalizedDraggedId) {
+    return games;
+  }
+
+  const fromIndex = games.findIndex((game) => game.id === normalizedDraggedId);
+  if (fromIndex < 0) {
+    return games;
+  }
+
+  const draggedGame = games[fromIndex];
+  if (!draggedGame) {
+    return games;
+  }
+
+  const withoutDragged = games.filter((game) => game.id !== normalizedDraggedId);
+  const safeDropIndex = Math.max(0, Math.min(Math.trunc(dropIndex), withoutDragged.length));
+  withoutDragged.splice(safeDropIndex, 0, draggedGame);
+  return withoutDragged;
+}
+
+function withSequentialSortOrder(games: LauncherGame[]): LauncherGame[] {
+  return games.map((game, index) => ({
+    ...game,
+    sort_order: (index + 1) * 10
+  }));
+}
+
 function onGameCardImageError(event: SyntheticEvent<HTMLImageElement>) {
   const image = event.currentTarget;
   const encodedCandidates = String(image.dataset.coverCandidates || "").trim();
@@ -905,6 +959,9 @@ export function AdminAppClient() {
   const [showAdvancedInSimplified, setShowAdvancedInSimplified] = useState(true);
   const [draggedGalleryIndex, setDraggedGalleryIndex] = useState<number | null>(null);
   const [galleryDropIndex, setGalleryDropIndex] = useState<number | null>(null);
+  const [draggedCatalogGameId, setDraggedCatalogGameId] = useState("");
+  const [catalogDropIndex, setCatalogDropIndex] = useState<number | null>(null);
+  const [isSavingCatalogOrder, setIsSavingCatalogOrder] = useState(false);
   const [draftUpdatedAt, setDraftUpdatedAt] = useState("");
   const [isJsonImportOpen, setIsJsonImportOpen] = useState(false);
   const [jsonImportInput, setJsonImportInput] = useState("");
@@ -1052,6 +1109,29 @@ export function AdminAppClient() {
   const canEditGames = Boolean(viewerPermissions.editGame);
   const canRemoveGames = Boolean(viewerPermissions.removeGame);
   const canManageMaintenance = Boolean(viewerPermissions.manageMaintenance);
+  const isCatalogReorderEnabled = canEditGames && search.trim().length === 0 && !gamesLoading && !isSavingCatalogOrder;
+  const catalogDragActive = Boolean(draggedCatalogGameId);
+  const catalogRenderItems = useMemo<CatalogRenderItem[]>(() => {
+    if (!catalogDragActive || catalogDropIndex === null) {
+      return filteredGames.map((game) => ({ kind: "game", game }));
+    }
+
+    const withoutDragged = filteredGames.filter((game) => game.id !== draggedCatalogGameId);
+    const safeDropIndex = Math.max(0, Math.min(catalogDropIndex, withoutDragged.length));
+    const renderItems: CatalogRenderItem[] = withoutDragged.map((game) => ({ kind: "game", game }));
+    renderItems.splice(safeDropIndex, 0, { kind: "placeholder", dropIndex: safeDropIndex });
+    return renderItems;
+  }, [catalogDragActive, catalogDropIndex, draggedCatalogGameId, filteredGames]);
+  const catalogDropPosition = useMemo(() => {
+    if (!catalogDragActive || catalogDropIndex === null) {
+      return null;
+    }
+    return Math.max(0, catalogDropIndex) + 1;
+  }, [catalogDragActive, catalogDropIndex]);
+  const draggedCatalogGame = useMemo(
+    () => filteredGames.find((game) => game.id === draggedCatalogGameId) || null,
+    [filteredGames, draggedCatalogGameId]
+  );
   const editingStaffRecord = useMemo(
     () => admins.find((entry) => entry.steamId === editingStaffId) || null,
     [admins, editingStaffId]
@@ -1377,6 +1457,196 @@ export function AdminAppClient() {
   function onGalleryDragEnd() {
     setDraggedGalleryIndex(null);
     setGalleryDropIndex(null);
+  }
+
+  function resetCatalogDragState() {
+    setDraggedCatalogGameId("");
+    setCatalogDropIndex(null);
+  }
+
+  function resolveCatalogDropIndexFromCard(event: DragEvent<HTMLElement>, overGameId: string): number | null {
+    if (!draggedCatalogGameId) {
+      return null;
+    }
+
+    const draggedIndex = filteredGames.findIndex((game) => game.id === draggedCatalogGameId);
+    const overIndex = filteredGames.findIndex((game) => game.id === overGameId);
+    if (draggedIndex < 0 || overIndex < 0) {
+      return null;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const dropAfter = event.clientY >= rect.top + rect.height / 2;
+    const rawIndex = overIndex + (dropAfter ? 1 : 0);
+    const adjustedIndex = rawIndex > draggedIndex ? rawIndex - 1 : rawIndex;
+    const maxIndex = Math.max(0, filteredGames.length - 1);
+    return Math.max(0, Math.min(adjustedIndex, maxIndex));
+  }
+
+  async function saveCatalogOrder(nextOrderedGames: LauncherGame[]) {
+    if (!isCatalogReorderEnabled) {
+      return;
+    }
+
+    const orderedIds = nextOrderedGames
+      .map((game) => String(game?.id || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (orderedIds.length === 0) {
+      return;
+    }
+
+    const previousGames = games;
+    const optimisticGames = withSequentialSortOrder(nextOrderedGames);
+    setGames(optimisticGames);
+    setIsSavingCatalogOrder(true);
+
+    try {
+      const response = await fetchApiWithTimeout(
+        "/api/launcher-games",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderedIds
+          })
+        },
+        45000
+      );
+      const json = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        games?: LauncherGame[];
+        updated?: number;
+        message?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || !json?.ok) {
+        throw new Error(json?.message || json?.error || `Falha ao atualizar ordem (${response.status}).`);
+      }
+
+      const resolvedGames = Array.isArray(json.games) ? json.games : optimisticGames;
+      setGames(resolvedGames);
+      if (Number(json.updated || 0) > 0) {
+        setNoticeState("Ordem do launcher atualizada com sucesso.", false);
+      }
+    } catch (error) {
+      setGames(previousGames);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao salvar a nova ordem. Tente novamente.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao salvar ordem dos jogos.", true);
+      }
+    } finally {
+      setIsSavingCatalogOrder(false);
+    }
+  }
+
+  function onCatalogDragStart(event: DragEvent<HTMLElement>, gameId: string) {
+    if (!isCatalogReorderEnabled) {
+      event.preventDefault();
+      return;
+    }
+
+    const normalizedGameId = String(gameId || "").trim();
+    if (!normalizedGameId) {
+      event.preventDefault();
+      return;
+    }
+
+    const startIndex = filteredGames.findIndex((game) => game.id === normalizedGameId);
+    if (startIndex < 0) {
+      event.preventDefault();
+      return;
+    }
+
+    setDraggedCatalogGameId(normalizedGameId);
+    setCatalogDropIndex(Math.max(0, Math.min(startIndex, Math.max(0, filteredGames.length - 1))));
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", normalizedGameId);
+  }
+
+  function onCatalogCardDragOver(event: DragEvent<HTMLElement>, overGameId: string) {
+    if (!isCatalogReorderEnabled || !draggedCatalogGameId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const nextDropIndex = resolveCatalogDropIndexFromCard(event, overGameId);
+    if (nextDropIndex === null) {
+      return;
+    }
+    if (catalogDropIndex !== nextDropIndex) {
+      setCatalogDropIndex(nextDropIndex);
+    }
+  }
+
+  function onCatalogCardDrop(event: DragEvent<HTMLElement>, overGameId: string) {
+    if (!isCatalogReorderEnabled || !draggedCatalogGameId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const dropIndex = resolveCatalogDropIndexFromCard(event, overGameId);
+    const draggedId = String(event.dataTransfer.getData("text/plain") || draggedCatalogGameId).trim() || draggedCatalogGameId;
+    resetCatalogDragState();
+    if (dropIndex === null || !draggedId) {
+      return;
+    }
+
+    const nextOrder = reorderGamesByDropIndex(filteredGames, draggedId, dropIndex);
+    const hasChanged = nextOrder.some((game, index) => game.id !== filteredGames[index]?.id);
+    if (!hasChanged) {
+      return;
+    }
+    void saveCatalogOrder(nextOrder);
+  }
+
+  function onCatalogGridDragOver(event: DragEvent<HTMLElement>) {
+    if (!isCatalogReorderEnabled || !draggedCatalogGameId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const target = event.target;
+    if (target instanceof Element && target.closest(".game-card-shell")) {
+      return;
+    }
+    const dropAtEndIndex = Math.max(0, filteredGames.length - 1);
+    if (catalogDropIndex !== dropAtEndIndex) {
+      setCatalogDropIndex(dropAtEndIndex);
+    }
+  }
+
+  function onCatalogGridDrop(event: DragEvent<HTMLElement>) {
+    if (!isCatalogReorderEnabled || !draggedCatalogGameId) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof Element && target.closest(".game-card-shell")) {
+      return;
+    }
+
+    event.preventDefault();
+    const draggedId = String(event.dataTransfer.getData("text/plain") || draggedCatalogGameId).trim() || draggedCatalogGameId;
+    const dropAtEndIndex = Math.max(0, filteredGames.length - 1);
+    resetCatalogDragState();
+    if (!draggedId) {
+      return;
+    }
+
+    const nextOrder = reorderGamesByDropIndex(filteredGames, draggedId, dropAtEndIndex);
+    const hasChanged = nextOrder.some((game, index) => game.id !== filteredGames[index]?.id);
+    if (!hasChanged) {
+      return;
+    }
+    void saveCatalogOrder(nextOrder);
+  }
+
+  function onCatalogDragEnd() {
+    resetCatalogDragState();
   }
 
   function setGenres(items: string[]) {
@@ -1811,6 +2081,21 @@ export function AdminAppClient() {
     if (!viewer.authenticated || !viewer.isAdmin) return;
     void loadDashboardBootstrap();
   }, [viewer.authenticated, viewer.isAdmin]);
+
+  useEffect(() => {
+    if (!catalogDragActive) return;
+    if (dashboardSection !== "jogos" || view !== "catalog" || !isCatalogReorderEnabled) {
+      resetCatalogDragState();
+    }
+  }, [catalogDragActive, dashboardSection, view, isCatalogReorderEnabled]);
+
+  useEffect(() => {
+    if (!catalogDragActive) return;
+    const draggedStillVisible = filteredGames.some((game) => game.id === draggedCatalogGameId);
+    if (!draggedStillVisible) {
+      resetCatalogDragState();
+    }
+  }, [catalogDragActive, filteredGames, draggedCatalogGameId]);
 
   useEffect(() => {
     const normalizedInput = normalizeUrlInput(form.steamUrl);
@@ -2646,6 +2931,17 @@ export function AdminAppClient() {
               </button>
             </div>
           </div>
+          {canEditGames ? (
+            <article className={`catalog-reorder-guide ${catalogDragActive ? "is-active" : ""}`}>
+              {isSavingCatalogOrder
+                ? "Salvando nova ordem no launcher..."
+                : search.trim()
+                  ? "Limpe a busca para reorganizar por arrastar e soltar."
+                  : catalogDragActive
+                    ? `Solte ${draggedCatalogGame?.name || "o jogo"} na posicao ${catalogDropPosition || 1}.`
+                    : "Arraste um jogo para definir a ordem de exibicao no launcher (salvamento automatico)."}
+            </article>
+          ) : null}
           {!canEditGames ? (
             <article className="card catalog-empty">
               Seu cargo {formatRoleLabel(viewerRole)} nao pode editar jogos existentes.
@@ -2655,16 +2951,41 @@ export function AdminAppClient() {
           {!gamesLoading && filteredGames.length === 0 ? (
             <article className="card catalog-empty">Nenhum jogo encontrado.</article>
           ) : null}
-          <div className="game-catalog-grid">
-            {filteredGames.map((game) => {
+          <div
+            className={`game-catalog-grid ${catalogDragActive ? "is-dragging" : ""}`}
+            onDragOver={onCatalogGridDragOver}
+            onDrop={onCatalogGridDrop}
+          >
+            {catalogRenderItems.map((entry, renderIndex) => {
+              if (entry.kind === "placeholder") {
+                return (
+                  <article className="catalog-drop-slot" key={`drop-slot-${entry.dropIndex}-${renderIndex}`}>
+                    <span>Solte aqui</span>
+                  </article>
+                );
+              }
+
+              const game = entry.game;
               const cover = coverUrl(game);
               const allCandidates = coverCandidates(game);
+              const isDragSource = catalogDragActive && draggedCatalogGameId === game.id;
               return (
-                <article className="game-card-shell" key={game.id}>
+                <article
+                  className={`game-card-shell ${isDragSource ? "is-drag-source" : ""}`}
+                  draggable={isCatalogReorderEnabled}
+                  key={game.id}
+                  onDragEnd={onCatalogDragEnd}
+                  onDragOver={(event) => onCatalogCardDragOver(event, game.id)}
+                  onDragStart={(event) => onCatalogDragStart(event, game.id)}
+                  onDrop={(event) => onCatalogCardDrop(event, game.id)}
+                >
                   <button
                     className="game-card game-card-poster"
-                    disabled={!canEditGames}
-                    onClick={() => openEditor(game)}
+                    disabled={!canEditGames || isSavingCatalogOrder}
+                    onClick={() => {
+                      if (catalogDragActive) return;
+                      openEditor(game);
+                    }}
                     type="button"
                   >
                     <div className="game-card-media">
@@ -2994,6 +3315,12 @@ export function AdminAppClient() {
                     <div className="gallery-toolbar">
                       <input
                         onChange={(event) => setGalleryInput(event.target.value)}
+                        onBlur={() => {
+                          const normalized = normalizeGalleryMediaUrl(galleryInput);
+                          if (normalized && normalized !== galleryInput) {
+                            setGalleryInput(normalized);
+                          }
+                        }}
                         onKeyDown={onGalleryInputKeyDown}
                         placeholder="Cole a URL da imagem e pressione Enter"
                         type="url"

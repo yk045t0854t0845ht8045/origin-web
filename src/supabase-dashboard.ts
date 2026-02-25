@@ -204,6 +204,34 @@ function normalizeLauncherGameRow(row) {
   };
 }
 
+function compareLauncherGamesBySortOrder(left, right) {
+  const leftOrder = parseIntegerInput(left?.sort_order, 1_000_000);
+  const rightOrder = parseIntegerInput(right?.sort_order, 1_000_000);
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+
+  const leftUpdatedAt = Date.parse(readText(left?.updated_at));
+  const rightUpdatedAt = Date.parse(readText(right?.updated_at));
+  const safeLeftUpdatedAt = Number.isFinite(leftUpdatedAt) ? leftUpdatedAt : 0;
+  const safeRightUpdatedAt = Number.isFinite(rightUpdatedAt) ? rightUpdatedAt : 0;
+  if (safeRightUpdatedAt !== safeLeftUpdatedAt) {
+    return safeRightUpdatedAt - safeLeftUpdatedAt;
+  }
+
+  const leftName = readText(left?.name).toLowerCase();
+  const rightName = readText(right?.name).toLowerCase();
+  if (leftName !== rightName) {
+    return leftName.localeCompare(rightName, "pt-BR");
+  }
+
+  return readText(left?.id).localeCompare(readText(right?.id), "pt-BR");
+}
+
+function sortLauncherGamesBySortOrder(games = []) {
+  return [...games].sort(compareLauncherGamesBySortOrder);
+}
+
 function normalizeRuntimeFlagRow(row) {
   if (!row || typeof row !== "object") {
     return null;
@@ -294,7 +322,7 @@ async function fetchLauncherGamesFromSupabase({ search = "", limit = 250 } = {})
 
   const endpoint = new URL(`${config.supabaseUrl}/rest/v1/launcher_games`);
   endpoint.searchParams.set("select", LAUNCHER_GAMES_SELECT_COLUMNS);
-  endpoint.searchParams.set("order", "updated_at.desc");
+  endpoint.searchParams.set("order", "sort_order.asc.nullslast,updated_at.desc");
   endpoint.searchParams.set("limit", String(Math.min(Math.max(Number(limit) || 1, 1), 500)));
 
   const normalizedSearch = String(search || "")
@@ -318,7 +346,7 @@ async function fetchLauncherGamesFromSupabase({ search = "", limit = 250 } = {})
   }
 
   const rows = Array.isArray(responsePayload) ? responsePayload : [];
-  const games = rows.map(normalizeLauncherGameRow).filter(Boolean);
+  const games = sortLauncherGamesBySortOrder(rows.map(normalizeLauncherGameRow).filter(Boolean));
   launcherGamesCache.data = games;
   launcherGamesCache.updatedAt = Date.now();
   return games;
@@ -359,6 +387,69 @@ async function deleteLauncherGameInSupabase(gameId) {
     return false;
   }
   return true;
+}
+
+async function updateLauncherGamesSortOrderInSupabase(updates = []) {
+  assertSupabaseConfig();
+
+  const dedupedById = new Map();
+  for (const entry of Array.isArray(updates) ? updates : []) {
+    const normalizedId = slugify(entry?.id);
+    if (!normalizedId) {
+      continue;
+    }
+    const sortOrder = Math.max(1, parseIntegerInput(entry?.sort_order ?? entry?.sortOrder, 1));
+    dedupedById.set(normalizedId, {
+      id: normalizedId,
+      sort_order: sortOrder
+    });
+  }
+
+  const normalizedUpdates = [...dedupedById.values()];
+  if (normalizedUpdates.length === 0) {
+    return fetchLauncherGamesFromSupabase({ limit: 500 });
+  }
+
+  const batchSize = 12;
+  for (let index = 0; index < normalizedUpdates.length; index += batchSize) {
+    const batch = normalizedUpdates.slice(index, index + batchSize);
+    await Promise.all(
+      batch.map(async (entry) => {
+        const endpoint = new URL(`${config.supabaseUrl}/rest/v1/launcher_games`);
+        endpoint.searchParams.set("id", `eq.${entry.id}`);
+        endpoint.searchParams.set("select", "id,sort_order");
+
+        const response = await fetchSupabaseWithRetry(endpoint.toString(), {
+          method: "PATCH",
+          headers: supabaseHeaders({
+            Prefer: "return=representation"
+          }),
+          body: JSON.stringify({
+            sort_order: entry.sort_order
+          })
+        });
+
+        const responseText = await response.text();
+        const responsePayload = parseSupabaseResponsePayload(responseText);
+        if (!response.ok) {
+          throw new Error(
+            buildSupabaseErrorMessage(responsePayload, response.status, `Falha ao atualizar ordem de ${entry.id}`)
+          );
+        }
+
+        const rows = Array.isArray(responsePayload)
+          ? responsePayload
+          : responsePayload && typeof responsePayload === "object"
+            ? [responsePayload]
+            : [];
+        if (rows.length === 0) {
+          throw new Error(`Jogo ${entry.id} nao encontrado para atualizar ordem.`);
+        }
+      })
+    );
+  }
+
+  return fetchLauncherGamesFromSupabase({ limit: 500 });
 }
 
 async function fetchRuntimeFlagFromSupabase(flagId) {
@@ -474,6 +565,7 @@ module.exports = {
   fetchLauncherGamesFromSupabase,
   getLauncherGamesCacheSnapshot,
   deleteLauncherGameInSupabase,
+  updateLauncherGamesSortOrderInSupabase,
   fetchRuntimeFlagFromSupabase,
   upsertRuntimeFlagInSupabase,
   supabaseHealthCheck
