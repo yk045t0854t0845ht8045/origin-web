@@ -1,5 +1,5 @@
 // @ts-nocheck
-const { config } = require("../../src/admin-runtime");
+const config = require("../../src/config");
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -19,4 +19,3 @@ export default async function handler(req, res) {
     now: new Date().toISOString()
   });
 }
-

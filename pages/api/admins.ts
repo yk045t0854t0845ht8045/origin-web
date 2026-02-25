@@ -1,12 +1,13 @@
 // @ts-nocheck
 const { requireAdmin, normalizeRole } = require("../../src/route-auth");
 const {
-  adminStore,
+  listAdminsFromSupabase,
+  upsertAdminInSupabase,
   enrichAdminsWithSteamProfiles,
-  inferAdminErrorStatus
-} = require("../../src/admin-runtime");
+  inferAdminErrorStatus,
+  readText
+} = require("../../src/admins-supabase");
 const { fetchSteamProfileBySteamId } = require("../../src/auth-core");
-const { readText } = require("../../src/supabase-dashboard");
 const { isValidSteamId } = require("../../src/utils");
 
 async function handleList(req, res) {
@@ -16,7 +17,7 @@ async function handleList(req, res) {
   }
 
   try {
-    const admins = await adminStore.listAdmins();
+    const admins = await listAdminsFromSupabase();
     const enrichedAdmins = await enrichAdminsWithSteamProfiles(admins);
     res.status(200).json({
       admins: enrichedAdmins
@@ -50,12 +51,12 @@ async function handleCreate(req, res) {
   try {
     const steamProfile = await fetchSteamProfileBySteamId(steamId);
     const role = normalizeRole(req.body?.staffRole || req.body?.role, "staff");
-    const admin = await adminStore.addAdmin({
+    const admin = await upsertAdminInSupabase({
       steamId,
       staffName: readText(steamProfile?.displayName, steamId),
       staffRole: role
     });
-    const enrichedAdmins = await enrichAdminsWithSteamProfiles(await adminStore.listAdmins());
+    const enrichedAdmins = await enrichAdminsWithSteamProfiles(await listAdminsFromSupabase());
     const enrichedAdmin = enrichedAdmins.find((entry) => readText(entry?.steamId) === steamId) || admin;
     res.status(200).json({
       ok: true,

@@ -1,10 +1,9 @@
 // @ts-nocheck
 const { requireAdmin } = require("../../../src/route-auth");
 const {
-  adminStore,
-  db,
+  listAdminsFromSupabase,
   enrichAdminsWithSteamProfiles
-} = require("../../../src/admin-runtime");
+} = require("../../../src/admins-supabase");
 const {
   MAINTENANCE_FLAG_ID,
   defaultMaintenanceFlag,
@@ -34,7 +33,7 @@ export default async function handler(req, res) {
     const [gamesResult, adminsResult, maintenanceResult] = await Promise.allSettled([
       fetchLauncherGamesFromSupabase({ limit: 500 }),
       (async () => {
-        const admins = await adminStore.listAdmins();
+        const admins = await listAdminsFromSupabase();
         return enrichAdminsWithSteamProfiles(admins);
       })(),
       fetchRuntimeFlagFromSupabase(MAINTENANCE_FLAG_ID)
@@ -58,11 +57,7 @@ export default async function handler(req, res) {
       admins = Array.isArray(adminsResult.value) ? adminsResult.value : [];
     } else {
       warnings.push(`Staffs: ${readText(adminsResult.reason?.message, "fallback local ativo.")}`);
-      try {
-        admins = await enrichAdminsWithSteamProfiles(db.listAdmins());
-      } catch (_error) {
-        admins = [];
-      }
+      admins = [];
     }
 
     let maintenance = defaultMaintenanceFlag();

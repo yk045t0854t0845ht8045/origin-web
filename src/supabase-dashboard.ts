@@ -1,5 +1,5 @@
 // @ts-nocheck
-const { config } = require("./admin-runtime");
+const config = require("./config");
 const { slugify } = require("./utils");
 
 const SUPABASE_FETCH_TIMEOUT_MS = 6000;
@@ -478,4 +478,3 @@ module.exports = {
   upsertRuntimeFlagInSupabase,
   supabaseHealthCheck
 };
-
