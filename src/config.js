@@ -185,7 +185,9 @@ const authConfig = loadAuthConfig(siteRoot);
 const port = parsePositiveInteger(process.env.PORT, 4080);
 const baseUrl = normalizeBaseUrl(process.env.BASE_URL, port);
 const sessionSecret = String(process.env.SESSION_SECRET || "change-me-origin-web-admin").trim();
-const steamApiKey = String(process.env.STEAM_API_KEY || "").trim();
+const steamApiKey = String(
+  process.env.STEAM_API_KEY || process.env.STEAM_WEB_API_KEY || process.env.STEAM_KEY || ""
+).trim();
 
 const defaultAdminIds = ["76561199481226329"];
 const envAdminIds = parseList(process.env.SITE_BOOTSTRAP_ADMIN_IDS || "").map((steamId) => ({

@@ -95,6 +95,27 @@ function getClearCookieOptions() {
   };
 }
 
+function getSteamLoginState() {
+  const steamApiKey = String(config.steamApiKey || "").trim();
+  if (!steamApiKey) {
+    return {
+      ready: false,
+      reason:
+        "STEAM_API_KEY ausente no backend (configure na Vercel em Project Settings > Environment Variables)."
+    };
+  }
+  if (steamApiKey.length < 16) {
+    return {
+      ready: false,
+      reason: "STEAM_API_KEY parece invalida (muito curta)."
+    };
+  }
+  return {
+    ready: true,
+    reason: ""
+  };
+}
+
 function parseCookieHeader(value) {
   const source = String(value || "").trim();
   if (!source) {
@@ -1737,6 +1758,7 @@ function createServer() {
 
   app.get("/api/me", async (req, res, nextMiddleware) => {
     try {
+      const steamLoginState = getSteamLoginState();
       const viewer = await buildViewer(req);
       if (viewer.authenticated && viewer.user?.steamId) {
         setPersistentAuthCookie(res, viewer.user);
@@ -1745,7 +1767,8 @@ function createServer() {
       }
       res.json({
         ...viewer,
-        steamLoginReady: Boolean(config.steamApiKey),
+        steamLoginReady: steamLoginState.ready,
+        steamLoginReason: steamLoginState.reason,
         adminStorage: adminStore.mode
       });
     } catch (error) {
@@ -1761,7 +1784,7 @@ function createServer() {
   });
 
   app.get("/api/auth/steam", (req, res) => {
-    if (!config.steamApiKey) {
+    if (!getSteamLoginState().ready) {
       res.redirect("/?error=steam-key-missing");
       return;
     }
@@ -1778,7 +1801,7 @@ function createServer() {
   });
 
   app.get("/api/auth/steam/return", async (req, res) => {
-    if (!config.steamApiKey) {
+    if (!getSteamLoginState().ready) {
       res.redirect("/?error=steam-key-missing");
       return;
     }

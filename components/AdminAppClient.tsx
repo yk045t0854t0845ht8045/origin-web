@@ -14,6 +14,7 @@ type ViewerState = {
     manageMaintenance: boolean;
   };
   steamLoginReady: boolean;
+  steamLoginReason?: string;
   adminError?: string;
   adminStorage?: string;
   user: {
@@ -147,6 +148,7 @@ const EMPTY_VIEWER: ViewerState = {
     manageMaintenance: false
   },
   steamLoginReady: false,
+  steamLoginReason: "",
   user: null
 };
 
@@ -1411,6 +1413,7 @@ export function AdminAppClient() {
           manageMaintenance: Boolean(json.permissions?.manageMaintenance)
         },
         steamLoginReady: Boolean(json.steamLoginReady),
+        steamLoginReason: String(json.steamLoginReason || ""),
         adminError: String(json.adminError || ""),
         adminStorage: String(json.adminStorage || ""),
         user: json.user || null
@@ -2191,8 +2194,11 @@ export function AdminAppClient() {
             <h1>Login com Steam</h1>
             <p className="text-muted">Apenas SteamID autorizado acessa o painel.</p>
             {authMsg ? <p className="inline-alert is-warning">{authMsg}</p> : null}
-            <button className="button button-primary" disabled={!viewer.steamLoginReady} onClick={startLogin}>
-              {viewer.steamLoginReady ? "Entrar com Steam" : "Steam indisponivel"}
+            {!viewer.steamLoginReady && viewer.steamLoginReason ? (
+              <p className="inline-alert is-warning">{viewer.steamLoginReason}</p>
+            ) : null}
+            <button className="button button-primary" onClick={startLogin}>
+              Entrar com Steam
             </button>
           </article>
         </section>
