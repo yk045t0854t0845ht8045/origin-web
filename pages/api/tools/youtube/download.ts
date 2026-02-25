@@ -50,6 +50,39 @@ export default async function handler(req, res) {
       res.redirect(302, directUrl);
       return;
     }
+
+    if (target?.useDirectYtdlStream) {
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Disposition", `attachment; filename=\"${target.outputFileName}\"`);
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+
+      const stream = ytdl(url, {
+        quality: "highest",
+        filter: "audioandvideo",
+        highWaterMark: 1 << 24
+      });
+
+      req.on("close", () => {
+        stream.destroy();
+      });
+
+      stream.on("error", (error) => {
+        if (!res.headersSent) {
+          res.status(502).json({
+            error: "youtube_download_failed",
+            message: String(error?.message || "Falha no download automatico do YouTube.")
+          });
+          return;
+        }
+        res.end();
+      });
+
+      stream.pipe(res);
+      return;
+    }
+
     const contentLength = Number(target?.format?.contentLength || 0);
 
     res.setHeader("Content-Type", "video/mp4");

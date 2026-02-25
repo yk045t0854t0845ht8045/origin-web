@@ -366,6 +366,72 @@ function mapMp4QualityOptions(info) {
   });
 }
 
+function hasDirectUrl(format) {
+  return Boolean(readText(format?.url));
+}
+
+function isMp4VideoWithAudio(format) {
+  if (!format || typeof format !== "object") return false;
+  if (!format.hasVideo || !format.hasAudio) return false;
+  const container = String(format.container || "").toLowerCase();
+  if (container && container !== "mp4") return false;
+  const mimeType = String(format.mimeType || format.mime_type || "").toLowerCase();
+  if (mimeType && !mimeType.includes("mp4")) return false;
+  return true;
+}
+
+function rankByAutoPriority(a, b) {
+  const aHeight = parseInteger(a?.height, 0);
+  const bHeight = parseInteger(b?.height, 0);
+  const aExact720 = aHeight === 720 ? 1 : 0;
+  const bExact720 = bHeight === 720 ? 1 : 0;
+  if (bExact720 !== aExact720) return bExact720 - aExact720;
+  if (bHeight !== aHeight) return bHeight - aHeight;
+  const aBitrate = parseInteger(a?.bitrate, 0);
+  const bBitrate = parseInteger(b?.bitrate, 0);
+  return bBitrate - aBitrate;
+}
+
+function selectAutoDownloadFormat(info, options = {}) {
+  const requireDirectUrl = Boolean(options.requireDirectUrl);
+  const formats = Array.isArray(info?.formats) ? info.formats : [];
+  const avCandidates = formats.filter(isMp4VideoWithAudio);
+  if (!avCandidates.length) {
+    return null;
+  }
+  const withUrl = avCandidates.filter(hasDirectUrl);
+  const pool = requireDirectUrl ? withUrl : withUrl.length ? withUrl : avCandidates;
+  if (!pool.length) {
+    return null;
+  }
+  const sorted = [...pool].sort(rankByAutoPriority);
+  return sorted[0] || null;
+}
+
+function buildAutoFallbackQualityOption(info, sourceMode) {
+  const requireDirectUrl = sourceMode === INFO_MODE_BASIC;
+  const selected = selectAutoDownloadFormat(info, { requireDirectUrl });
+  if (!selected) {
+    return null;
+  }
+
+  const height = parseInteger(selected?.height, 0);
+  return {
+    itag: 0,
+    qualityLabel: height > 0 ? `Auto (${height}p)` : "Auto",
+    fps: parseInteger(selected?.fps, 0),
+    container: "mp4",
+    hasAudio: true,
+    hasVideo: true,
+    bitrate: parseInteger(selected?.bitrate, 0),
+    height,
+    estimatedBytes: parseInteger(selected?.contentLength, 0),
+    estimatedSizeLabel: formatBytesLabel(parseInteger(selected?.contentLength, 0)),
+    source: "auto",
+    downloadUrl: readText(selected?.url)
+  };
+}
+
 async function getYoutubeBasicInfoFallback(normalizedUrl) {
   const videoId = readText(ytdl.getURLVideoID(normalizedUrl));
   if (!videoId) {
@@ -471,15 +537,21 @@ async function getYoutubeFormatsForUrl(urlRaw) {
   const thumbnails = Array.isArray(info?.videoDetails?.thumbnails) ? info.videoDetails.thumbnails : [];
   const thumbnailUrl = readText(thumbnails[thumbnails.length - 1]?.url);
 
+  const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
   const formats = mapMp4QualityOptions(info);
-  if (!formats.length) {
-    throw new Error("Nao encontramos formatos MP4 para esse video.");
+  const autoOption = buildAutoFallbackQualityOption(info, sourceMode);
+
+  let mergedFormats = formats;
+  if (autoOption) {
+    mergedFormats = [autoOption, ...formats.filter((entry) => parseInteger(entry?.itag, 0) !== 0)];
+  }
+  if (!mergedFormats.length) {
+    throw new Error("Nao encontramos formatos MP4 com audio para esse video no momento.");
   }
 
-  const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
   const warning =
     sourceMode === INFO_MODE_BASIC
-      ? "YouTube aplicou bloqueio anti-bot. Listando apenas formatos com URL direta disponivel no momento."
+      ? "YouTube aplicou verificacao anti-bot. Usando modo limitado com download direto disponivel."
       : "";
 
   return {
@@ -489,7 +561,7 @@ async function getYoutubeFormatsForUrl(urlRaw) {
     durationSeconds,
     durationLabel,
     thumbnailUrl,
-    formats,
+    formats: mergedFormats,
     warning,
     sourceMode
   };
@@ -504,13 +576,37 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
     throw new Error("URL do YouTube nao reconhecida.");
   }
 
+  const itagText = readText(itagRaw).toLowerCase();
   const selectedItag = parseInteger(itagRaw, 0);
-  if (!selectedItag) {
-    throw new Error("Selecione uma qualidade valida.");
-  }
+  const isAutoRequest = !itagText || itagText === "auto" || selectedItag <= 0;
 
   const info = await getYoutubeInfo(normalizedUrl);
   const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
+  if (isAutoRequest) {
+    const autoFormat = selectAutoDownloadFormat(info, {
+      requireDirectUrl: sourceMode === INFO_MODE_BASIC
+    });
+    if (!autoFormat) {
+      throw new Error("Nao foi possivel encontrar um MP4 com audio automaticamente para esse video.");
+    }
+
+    const titleAuto = readText(info?.videoDetails?.title, "youtube-video");
+    const autoHeight = parseInteger(autoFormat?.height, 0);
+    const qualitySuffix = autoHeight > 0 ? `${autoHeight}p-auto` : "auto";
+    const safeAutoFileName = sanitizeFileName(`${titleAuto} ${qualitySuffix}`.replace(/\s+/g, " ").trim(), "youtube-video");
+    const autoDirectUrl = readText(autoFormat?.url);
+
+    return {
+      info,
+      format: autoFormat,
+      outputFileName: `${safeAutoFileName}.mp4`,
+      selectedItag: parseInteger(autoFormat?.itag, 0),
+      sourceMode,
+      directUrl: autoDirectUrl,
+      useDirectYtdlStream: !autoDirectUrl
+    };
+  }
+
   const format = (Array.isArray(info?.formats) ? info.formats : []).find((entry) => {
     return parseInteger(entry?.itag, 0) === selectedItag && String(entry?.container || "").toLowerCase() === "mp4" && entry?.hasVideo;
   });
@@ -538,7 +634,8 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
     outputFileName,
     selectedItag,
     sourceMode,
-    directUrl
+    directUrl,
+    useDirectYtdlStream: false
   };
 }
 
