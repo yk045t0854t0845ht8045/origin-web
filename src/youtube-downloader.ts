@@ -409,9 +409,8 @@ function selectAutoDownloadFormat(info, options = {}) {
   return sorted[0] || null;
 }
 
-function buildAutoFallbackQualityOption(info, sourceMode) {
-  const requireDirectUrl = sourceMode === INFO_MODE_BASIC;
-  const selected = selectAutoDownloadFormat(info, { requireDirectUrl });
+function buildAutoFallbackQualityOption(info) {
+  const selected = selectAutoDownloadFormat(info, { requireDirectUrl: false });
   if (!selected) {
     return null;
   }
@@ -540,7 +539,7 @@ async function getYoutubeFormatsForUrl(urlRaw) {
 
   const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
   const formats = mapMp4QualityOptions(info);
-  const autoOption = buildAutoFallbackQualityOption(info, sourceMode);
+  const autoOption = buildAutoFallbackQualityOption(info);
 
   let mergedFormats = formats;
   if (autoOption) {
@@ -584,9 +583,7 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
   const info = await getYoutubeInfo(normalizedUrl);
   const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
   if (isAutoRequest) {
-    const autoFormat = selectAutoDownloadFormat(info, {
-      requireDirectUrl: sourceMode === INFO_MODE_BASIC
-    });
+    const autoFormat = selectAutoDownloadFormat(info, { requireDirectUrl: false });
     if (!autoFormat) {
       throw new Error("Nao foi possivel encontrar um MP4 com audio automaticamente para esse video.");
     }

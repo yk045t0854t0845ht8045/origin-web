@@ -1153,6 +1153,11 @@ export function AdminAppClient() {
   const viewerDisplayName = String(viewer.user?.displayName || "Steam User").trim() || "Steam User";
   const viewerSteamId = String(viewer.user?.steamId || "").trim();
   const viewerAvatarInitial = viewerDisplayName.slice(0, 1).toUpperCase() || "U";
+  const normalizedYoutubeUrlInput = useMemo(() => normalizeUrlInput(youtubeUrlInput), [youtubeUrlInput]);
+  const canDownloadYoutubeWithAutoFallback = useMemo(
+    () => Boolean(normalizedYoutubeUrlInput && isSupportedYoutubeUrl(normalizedYoutubeUrlInput)),
+    [normalizedYoutubeUrlInput]
+  );
   const selectedYoutubeQuality = useMemo(
     () => youtubeQualityOptions.find((option) => String(option.itag) === youtubeSelectedItag) || null,
     [youtubeQualityOptions, youtubeSelectedItag]
@@ -1863,7 +1868,13 @@ export function AdminAppClient() {
       if (requestId !== youtubeRequestSeqRef.current) {
         return;
       }
-      setYoutubeError(error instanceof Error ? error.message : "Falha ao buscar qualidades do YouTube.");
+      const message = error instanceof Error ? error.message : "Falha ao buscar qualidades do YouTube.";
+      const lower = String(message || "").toLowerCase();
+      if (lower.includes("anti-bot") || lower.includes("status code: 410") || lower.includes("not a bot")) {
+        setYoutubeError("YouTube bloqueou a listagem completa agora. Voce ainda pode baixar em modo padrao (preferencia 720p).");
+      } else {
+        setYoutubeError(message);
+      }
     } finally {
       if (requestId === youtubeRequestSeqRef.current) {
         setYoutubeLoading(false);
@@ -1872,13 +1883,9 @@ export function AdminAppClient() {
   }
 
   function downloadSelectedYoutubeVideo() {
-    const normalizedUrl = normalizeUrlInput(youtubeUrlInput);
-    if (!normalizedUrl) {
+    const normalizedUrl = normalizedYoutubeUrlInput;
+    if (!normalizedUrl || !isSupportedYoutubeUrl(normalizedUrl)) {
       setYoutubeError("Cole um link valido do YouTube.");
-      return;
-    }
-    if (!youtubeSelectedItag) {
-      setYoutubeError("Selecione uma qualidade antes de baixar.");
       return;
     }
 
@@ -1886,11 +1893,13 @@ export function AdminAppClient() {
     setYoutubeError("");
     try {
       const directDownloadUrl = String(selectedYoutubeQuality?.downloadUrl || "").trim();
+      const selectedItagParam = String(youtubeSelectedItag || "").trim();
+      const serverDownloadUrl = selectedItagParam
+        ? `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(selectedItagParam)}`
+        : `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}`;
       const downloadUrl = directDownloadUrl
         ? directDownloadUrl
-        : `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(
-            youtubeSelectedItag
-          )}`;
+        : serverDownloadUrl;
       const anchor = document.createElement("a");
       anchor.href = downloadUrl;
       anchor.rel = "noopener noreferrer";
@@ -1901,7 +1910,9 @@ export function AdminAppClient() {
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
-      const selectedLabel = selectedYoutubeQuality ? buildYoutubeQualityOptionLabel(selectedYoutubeQuality) : "qualidade selecionada";
+      const selectedLabel = selectedYoutubeQuality
+        ? buildYoutubeQualityOptionLabel(selectedYoutubeQuality)
+        : "modo padrao (preferencia 720p)";
       setNoticeState(`Download iniciado (${selectedLabel}).`, false);
     } finally {
       setYoutubeDownloading(false);
@@ -3515,7 +3526,7 @@ export function AdminAppClient() {
           <article className="card confirm-card youtube-modal-card" onClick={(event) => event.stopPropagation()}>
             <p className="kicker">FERRAMENTA</p>
             <h3>Baixar video do YouTube</h3>
-            <p className="text-muted">Cole o link, carregue as qualidades disponiveis e baixe em MP4.</p>
+            <p className="text-muted">Cole o link. Se as qualidades falharem, o download usa modo padrao com preferencia 720p.</p>
 
             <label className="compact-field">
               <span>Link do YouTube</span>
@@ -3543,7 +3554,7 @@ export function AdminAppClient() {
                 onClick={() => void loadYoutubeQualityOptions()}
                 type="button"
               >
-                {youtubeLoading ? "Carregando qualidades..." : "Buscar qualidades"}
+                {youtubeLoading ? "Carregando qualidades..." : "Carregar qualidades (opcional)"}
               </button>
             </div>
 
@@ -3565,7 +3576,7 @@ export function AdminAppClient() {
 
             {youtubeQualityOptions.length > 0 ? (
               <label className="compact-field">
-                <span>Qualidade MP4</span>
+                <span>Qualidade MP4 (opcional)</span>
                 <select
                   disabled={youtubeLoading || youtubeDownloading}
                   onChange={(event) => setYoutubeSelectedItag(event.target.value)}
@@ -3578,6 +3589,9 @@ export function AdminAppClient() {
                   ))}
                 </select>
               </label>
+            ) : null}
+            {youtubeQualityOptions.length === 0 && canDownloadYoutubeWithAutoFallback ? (
+              <p className="text-muted">Sem lista de qualidades no momento. O sistema baixa em modo padrao (preferencia 720p).</p>
             ) : null}
 
             {youtubeError ? <p className="inline-alert is-warning">{youtubeError}</p> : null}
@@ -3593,11 +3607,15 @@ export function AdminAppClient() {
               </button>
               <button
                 className="button button-primary"
-                disabled={youtubeLoading || youtubeDownloading || !youtubeQualityOptions.length || !youtubeSelectedItag}
+                disabled={youtubeLoading || youtubeDownloading || !canDownloadYoutubeWithAutoFallback}
                 onClick={downloadSelectedYoutubeVideo}
                 type="button"
               >
-                {youtubeDownloading ? "Iniciando..." : "Baixar MP4"}
+                {youtubeDownloading
+                  ? "Iniciando..."
+                  : youtubeQualityOptions.length > 0
+                    ? "Baixar MP4"
+                    : "Baixar MP4 (Auto 720p)"}
               </button>
             </div>
           </article>

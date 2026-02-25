@@ -32,16 +32,16 @@ export default async function handler(req, res) {
 
   const url = readQueryText(req.query?.url);
   const itag = readQueryText(req.query?.itag);
-  if (!url || !itag) {
+  if (!url) {
     res.status(400).json({
       error: "missing_params",
-      message: "Informe o link e a qualidade para baixar."
+      message: "Informe o link do YouTube para baixar."
     });
     return;
   }
 
   try {
-    const target = await resolveDownloadTarget(url, itag);
+    const target = await resolveDownloadTarget(url, itag || "auto");
     const directUrl = String(target?.directUrl || "").trim();
     if (String(target?.sourceMode || "").trim() === "basic" && directUrl) {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -58,8 +58,9 @@ export default async function handler(req, res) {
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
 
-      const stream = ytdl(url, {
-        quality: "highest",
+      const preferredQuality = Number(target?.selectedItag || 0) > 0 ? String(target.selectedItag) : "highest";
+      const stream = ytdl.downloadFromInfo(target.info, {
+        quality: preferredQuality,
         filter: "audioandvideo",
         highWaterMark: 1 << 24
       });
