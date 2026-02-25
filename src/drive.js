@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { Readable } = require("stream");
 const { google } = require("googleapis");
 const { sanitizeDriveName } = require("./utils");
 
@@ -264,6 +265,17 @@ function createDriveService(config) {
     });
   }
 
+  function resolvePrefixedFolderSegments(extraSegments = []) {
+    const prefix = String(config.googleDrivePathPrefix || "")
+      .split("/")
+      .map((segment) => sanitizeDriveName(segment, ""))
+      .filter(Boolean);
+    const appended = (Array.isArray(extraSegments) ? extraSegments : [])
+      .map((segment) => sanitizeDriveName(segment, ""))
+      .filter(Boolean);
+    return [...prefix, ...appended];
+  }
+
   async function uploadGameArchive({ localFilePath, gameName, gameSlug, archiveType }) {
     if (!localFilePath || !fs.existsSync(localFilePath)) {
       throw new Error("Arquivo temporario de upload nao encontrado.");
@@ -274,11 +286,7 @@ function createDriveService(config) {
       await ensureRootFolderAccessible(drive);
       const normalizedArchiveType = normalizeArchiveType(archiveType);
       const gameFolder = sanitizeDriveName(gameName || gameSlug || "game");
-      const pathPrefixSegments = String(config.googleDrivePathPrefix || "")
-        .split("/")
-        .map((segment) => sanitizeDriveName(segment, ""))
-        .filter(Boolean);
-      const folderSegments = [...pathPrefixSegments, gameFolder];
+      const folderSegments = resolvePrefixedFolderSegments([gameFolder]);
 
       const destinationFolderId = await ensureFolderPath(
         drive,
@@ -323,8 +331,60 @@ function createDriveService(config) {
     }
   }
 
+  async function uploadFileBuffer({ buffer, fileName, mimeType = "application/octet-stream", folderSegments = [] }) {
+    if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+      throw new Error("Conteudo de arquivo invalido para upload.");
+    }
+
+    const sanitizedName = sanitizeDriveName(fileName || "arquivo");
+    if (!sanitizedName) {
+      throw new Error("Nome de arquivo invalido para upload.");
+    }
+
+    try {
+      const drive = await getDriveClient();
+      await ensureRootFolderAccessible(drive);
+      const destinationPath = resolvePrefixedFolderSegments(folderSegments);
+      const destinationFolderId = await ensureFolderPath(drive, config.googleDriveRootFolderId, destinationPath);
+
+      const uploadResponse = await drive.files.create({
+        requestBody: {
+          name: sanitizedName,
+          parents: [destinationFolderId]
+        },
+        media: {
+          mimeType: String(mimeType || "application/octet-stream").trim() || "application/octet-stream",
+          body: Readable.from(buffer)
+        },
+        fields: "id,name",
+        ...DRIVE_SHARED_OPTIONS
+      });
+
+      const fileId = String(uploadResponse.data?.id || "");
+      if (!fileId) {
+        throw new Error("Falha ao criar arquivo no Google Drive.");
+      }
+
+      if (config.googleDrivePublicLink) {
+        await setPublicReadPermission(drive, fileId);
+      }
+
+      return {
+        fileId,
+        fileName: sanitizedName,
+        folderPath: destinationPath.join("/"),
+        viewUrl: `https://drive.google.com/file/d/${fileId}/view`,
+        downloadUrl: `https://drive.google.com/uc?export=download&id=${fileId}`,
+        publicUrl: config.googleDrivePublicLink ? `https://drive.google.com/uc?export=view&id=${fileId}` : ""
+      };
+    } catch (error) {
+      throw mapDriveError(error, config);
+    }
+  }
+
   return {
-    uploadGameArchive
+    uploadGameArchive,
+    uploadFileBuffer
   };
 }
 

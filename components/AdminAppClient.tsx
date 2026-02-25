@@ -1692,7 +1692,7 @@ export function AdminAppClient() {
   }, [view, isSaving, isUploadingGallery]);
 
   function startLogin() {
-    window.location.href = "/auth/steam";
+    window.location.href = "/api/auth/steam";
   }
 
   async function logout() {

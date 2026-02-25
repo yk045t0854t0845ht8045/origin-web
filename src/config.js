@@ -112,6 +112,10 @@ function mergeBootstrapAdmins(entries) {
 function normalizeBaseUrl(value, port) {
   const raw = String(value || "").trim();
   if (!raw) {
+    const vercelUrl = String(process.env.VERCEL_URL || "").trim();
+    if (vercelUrl) {
+      return `https://${vercelUrl}`.replace(/\/+$/, "");
+    }
     return `http://localhost:${port}`;
   }
   try {
@@ -173,8 +177,9 @@ function loadAuthConfig(siteRoot) {
 }
 
 const siteRoot = path.resolve(__dirname, "..");
-const dataDir = path.join(siteRoot, "data");
-const uploadTempDir = path.join(siteRoot, "uploads-temp");
+const runtimeRoot = process.env.VERCEL ? path.join("/tmp", "origin-web-admin") : siteRoot;
+const dataDir = path.join(runtimeRoot, "data");
+const uploadTempDir = path.join(runtimeRoot, "uploads-temp");
 const authConfig = loadAuthConfig(siteRoot);
 
 const port = parsePositiveInteger(process.env.PORT, 4080);

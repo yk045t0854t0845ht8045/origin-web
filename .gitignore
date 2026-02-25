@@ -7,6 +7,7 @@ out/
 origin-launcher-*.json
 data/*.db
 data/*.db-*
+public/uploads/gallery/*
 uploads-temp/*
 !uploads-temp/.gitkeep
 !data/.gitkeep

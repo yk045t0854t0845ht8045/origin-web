@@ -25,9 +25,10 @@ Dentro de `site/`:
 
 1. Copie `.env.example` para `.env`.
 2. Preencha pelo menos:
+   - `BASE_URL` (ex.: `https://seu-projeto.vercel.app`)
    - `STEAM_API_KEY`
    - `SITE_BOOTSTRAP_ADMIN_IDS` (ou `SITE_BOOTSTRAP_ADMIN_TABLE`)
-   - `GOOGLE_DRIVE_KEY_FILE` ou `GOOGLE_SERVICE_ACCOUNT_JSON`
+   - `GOOGLE_DRIVE_KEY_FILE` ou `GOOGLE_SERVICE_ACCOUNT_JSON` (apenas se for fazer upload pelo painel)
    - `SUPABASE_URL` e `SUPABASE_ANON_KEY`
    - `SUPABASE_SERVICE_ROLE_KEY` (recomendado em producao)
 3. Opcional:
@@ -86,6 +87,16 @@ npm run dev
 ```
 
 Abra `http://localhost:4080`.
+
+## 4.1) Deploy na Vercel
+
+- O login Steam usa `GET /api/auth/steam` e callback em `GET /api/auth/steam/return`.
+- Configure no projeto da Vercel as variaveis:
+  - `BASE_URL` com o dominio publico HTTPS do deploy.
+  - `STEAM_API_KEY`, `SESSION_SECRET`.
+  - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+  - `GOOGLE_DRIVE_KEY_FILE` **ou** `GOOGLE_SERVICE_ACCOUNT_JSON`.
+- Em serverless, uploads temporarios sao gravados em `/tmp`.
 
 ## 5) Publicar o repositorio do site
 
