@@ -760,6 +760,7 @@ module.exports = {
   buildSteamOpenIdRedirectUrl,
   toStringMap,
   fetchSteamProfileBySteamId,
+  fetchSteamProfilesBySteamIds,
   createSteamStateToken,
   readSteamStateToken,
   verifySteamOpenIdAssertion,
