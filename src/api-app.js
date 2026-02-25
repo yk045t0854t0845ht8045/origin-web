@@ -61,17 +61,6 @@ db.bootstrapAdmins(config.bootstrapAdmins);
 const adminStore = createAdminStore(config, db);
 const driveService = createDriveService(config);
 const steamProfileCache = new Map();
-let backendReadyPromise = null;
-
-function ensureBackendReady() {
-  if (!backendReadyPromise) {
-    backendReadyPromise = adminStore.initialize().catch((error) => {
-      backendReadyPromise = null;
-      throw error;
-    });
-  }
-  return backendReadyPromise;
-}
 
 const isDev = process.env.NODE_ENV !== "production";
 const useSecureCookies = !isDev;
@@ -1384,11 +1373,6 @@ const publishUpload = multer({
 function createServer() {
   const app = express();
   app.disable("x-powered-by");
-
-  // Initialize admin cache/bootstrap in background. Do not block /api/me.
-  void ensureBackendReady().catch((error) => {
-    console.warn("[origin-web-admin] background initialize failed:", error?.message || error);
-  });
 
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ extended: true }));

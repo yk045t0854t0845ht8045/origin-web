@@ -1577,6 +1577,15 @@ export function AdminAppClient() {
   }, []);
 
   useEffect(() => {
+    if (!viewerLoading) return;
+    const fallback = window.setTimeout(() => {
+      setViewerLoading(false);
+      setNoticeState("Sessao demorou para carregar. Voce pode tentar o login Steam manualmente.", true);
+    }, 15000);
+    return () => window.clearTimeout(fallback);
+  }, [viewerLoading]);
+
+  useEffect(() => {
     if (!isUserMenuOpen) return;
 
     const onPointerDown = (event: MouseEvent) => {
@@ -2179,6 +2188,15 @@ export function AdminAppClient() {
           <article className="card auth-card">
             <p className="kicker">WPLAY STAFF PANEL</p>
             <h1>Carregando sessao...</h1>
+            <p className="text-muted">Se demorar mais de alguns segundos, tente entrar manualmente.</p>
+            <div className="auth-actions">
+              <button className="button button-primary" onClick={startLogin}>
+                Entrar com Steam
+              </button>
+              <button className="button button-secondary" onClick={() => void loadViewer()}>
+                Tentar novamente
+              </button>
+            </div>
           </article>
         </section>
       </main>

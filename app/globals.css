@@ -176,6 +176,11 @@ body {
   font-size: clamp(1.2rem, 2.6vw, 1.8rem);
 }
 
+.auth-actions {
+  display: grid;
+  gap: 0.6rem;
+}
+
 .kicker {
   margin: 0;
   color: hsl(var(--muted-foreground));
