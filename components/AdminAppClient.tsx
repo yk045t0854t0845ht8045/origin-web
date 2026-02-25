@@ -263,7 +263,7 @@ function normalizeMediaPathInput(value: string): string {
   return normalizedPath;
 }
 
-function normalizeImgurMediaUrl(value: string): string {
+function normalizeImgurMediaUrl(value: string, fallbackExtension = ".png"): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
   try {
@@ -272,11 +272,32 @@ function normalizeImgurMediaUrl(value: string): string {
     if (!["imgur.com", "www.imgur.com", "m.imgur.com"].includes(host)) return raw;
     const pathMatch = parsed.pathname.match(/^\/([a-z0-9]+)(\.[a-z0-9]+)?$/i);
     if (!pathMatch?.[1]) return raw;
-    const extension = String(pathMatch[2] || ".png");
-    return `https://i.imgur.com/${pathMatch[1]}${extension}${parsed.search || ""}`;
+    const normalizedFallback = String(fallbackExtension || ".png").trim().startsWith(".")
+      ? String(fallbackExtension || ".png").trim()
+      : `.${String(fallbackExtension || "png").trim()}`;
+    const extension = String(pathMatch[2] || normalizedFallback).toLowerCase();
+    return `https://i.imgur.com/${pathMatch[1]}${extension}${parsed.search || ""}${parsed.hash || ""}`;
   } catch (_error) {
     return raw;
   }
+}
+
+const IMGUR_IMAGE_FORM_FIELDS = new Set<keyof FormState>(["imageUrl", "cardImageUrl", "bannerUrl", "logoUrl"]);
+
+function normalizeMediaUrlForField(field: keyof FormState, value: string): string {
+  const normalized = normalizeUrlInput(String(value || ""));
+  if (!normalized) return "";
+  if (field === "trailerUrl") {
+    return normalizeImgurMediaUrl(normalized, ".mp4");
+  }
+  if (IMGUR_IMAGE_FORM_FIELDS.has(field)) {
+    return normalizeImgurMediaUrl(normalized, ".png");
+  }
+  return normalized;
+}
+
+function normalizeGalleryMediaUrl(value: string): string {
+  return normalizeImgurMediaUrl(normalizeUrlInput(value), ".png");
 }
 
 function compactText(value: string, max = 44): string {
@@ -391,7 +412,7 @@ function normalizeImportedFormPayload(
   const rawGenres = pickFirstJsonValue(source, genreKeys);
   const rawGallery = pickFirstJsonValue(source, galleryKeys);
   const galleryText = readImportListText(rawGallery);
-  const normalizedGallery = uniqueList(parseListText(galleryText).map(normalizeUrlInput)).join("\n");
+  const normalizedGallery = uniqueList(parseListText(galleryText).map(normalizeGalleryMediaUrl)).join("\n");
 
   const rawDownloadUrls =
     pickFirstJsonValue(source, downloadListKeys) ??
@@ -425,13 +446,26 @@ function normalizeImportedFormPayload(
       pickFirstJsonValue(source, ["launchExecutable", "launch_executable"]),
       currentForm.launchExecutable
     ),
-    imageUrl: normalizeUrlInput(readImportText(pickFirstJsonValue(source, ["imageUrl", "image_url"]), currentForm.imageUrl)),
-    cardImageUrl: normalizeUrlInput(
+    imageUrl: normalizeMediaUrlForField(
+      "imageUrl",
+      readImportText(pickFirstJsonValue(source, ["imageUrl", "image_url"]), currentForm.imageUrl)
+    ),
+    cardImageUrl: normalizeMediaUrlForField(
+      "cardImageUrl",
       readImportText(pickFirstJsonValue(source, ["cardImageUrl", "card_image_url"]), currentForm.cardImageUrl)
     ),
-    bannerUrl: normalizeUrlInput(readImportText(pickFirstJsonValue(source, ["bannerUrl", "banner_url"]), currentForm.bannerUrl)),
-    logoUrl: normalizeUrlInput(readImportText(pickFirstJsonValue(source, ["logoUrl", "logo_url"]), currentForm.logoUrl)),
-    trailerUrl: normalizeUrlInput(readImportText(pickFirstJsonValue(source, ["trailerUrl", "trailer_url"]), currentForm.trailerUrl)),
+    bannerUrl: normalizeMediaUrlForField(
+      "bannerUrl",
+      readImportText(pickFirstJsonValue(source, ["bannerUrl", "banner_url"]), currentForm.bannerUrl)
+    ),
+    logoUrl: normalizeMediaUrlForField(
+      "logoUrl",
+      readImportText(pickFirstJsonValue(source, ["logoUrl", "logo_url"]), currentForm.logoUrl)
+    ),
+    trailerUrl: normalizeMediaUrlForField(
+      "trailerUrl",
+      readImportText(pickFirstJsonValue(source, ["trailerUrl", "trailer_url"]), currentForm.trailerUrl)
+    ),
     developedBy: readImportText(pickFirstJsonValue(source, ["developedBy", "developed_by"]), currentForm.developedBy),
     publishedBy: readImportText(pickFirstJsonValue(source, ["publishedBy", "published_by"]), currentForm.publishedBy),
     releaseDate: readImportText(pickFirstJsonValue(source, ["releaseDate", "release_date"]), currentForm.releaseDate),
@@ -522,18 +556,18 @@ function sanitizeFormForSnapshot(form: FormState): FormState {
     archivePassword: String(form.archivePassword || "").trim(),
     installDirName: String(form.installDirName || "").trim(),
     launchExecutable: String(form.launchExecutable || "").trim(),
-    imageUrl: normalizeUrlInput(form.imageUrl),
-    cardImageUrl: normalizeUrlInput(form.cardImageUrl),
-    bannerUrl: normalizeUrlInput(form.bannerUrl),
-    logoUrl: normalizeUrlInput(form.logoUrl),
-    trailerUrl: normalizeUrlInput(form.trailerUrl),
+    imageUrl: normalizeMediaUrlForField("imageUrl", form.imageUrl),
+    cardImageUrl: normalizeMediaUrlForField("cardImageUrl", form.cardImageUrl),
+    bannerUrl: normalizeMediaUrlForField("bannerUrl", form.bannerUrl),
+    logoUrl: normalizeMediaUrlForField("logoUrl", form.logoUrl),
+    trailerUrl: normalizeMediaUrlForField("trailerUrl", form.trailerUrl),
     developedBy: String(form.developedBy || "").trim(),
     publishedBy: String(form.publishedBy || "").trim(),
     releaseDate: String(form.releaseDate || "").trim(),
     steamAppId: String(form.steamAppId || "").trim(),
     steamUrl: normalizeUrlInput(form.steamUrl),
     genres: uniqueList(parseListText(form.genres)).join("\n"),
-    gallery: uniqueList(parseListText(form.gallery).map(normalizeUrlInput)).join("\n"),
+    gallery: uniqueList(parseListText(form.gallery).map(normalizeGalleryMediaUrl)).join("\n"),
     downloadUrls: uniqueList(parseListText(form.downloadUrls).map(normalizeUrlInput)).join("\n"),
     sizeBytes: String(form.sizeBytes || "").trim(),
     sizeLabel: String(form.sizeLabel || "").trim(),
@@ -1028,8 +1062,19 @@ export function AdminAppClient() {
     setNotice({ msg, error });
   }
 
+  function normalizeFormFieldUpdate<K extends keyof FormState>(key: K, value: FormState[K]): FormState[K] {
+    if (typeof value !== "string") {
+      return value;
+    }
+    if (key === "imageUrl" || key === "cardImageUrl" || key === "bannerUrl" || key === "logoUrl" || key === "trailerUrl") {
+      return normalizeMediaUrlForField(key, value) as FormState[K];
+    }
+    return value;
+  }
+
   function updateField<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    const nextValue = normalizeFormFieldUpdate(key, value);
+    setForm((prev) => ({ ...prev, [key]: nextValue }));
   }
 
   function clearEditorDraft() {
@@ -1143,18 +1188,18 @@ export function AdminAppClient() {
   function normalizeUrlFields() {
     setForm((prev) => ({
       ...prev,
-      imageUrl: normalizeUrlInput(prev.imageUrl),
-      cardImageUrl: normalizeUrlInput(prev.cardImageUrl),
-      bannerUrl: normalizeUrlInput(prev.bannerUrl),
-      logoUrl: normalizeUrlInput(prev.logoUrl),
-      trailerUrl: normalizeUrlInput(prev.trailerUrl),
+      imageUrl: normalizeMediaUrlForField("imageUrl", prev.imageUrl),
+      cardImageUrl: normalizeMediaUrlForField("cardImageUrl", prev.cardImageUrl),
+      bannerUrl: normalizeMediaUrlForField("bannerUrl", prev.bannerUrl),
+      logoUrl: normalizeMediaUrlForField("logoUrl", prev.logoUrl),
+      trailerUrl: normalizeMediaUrlForField("trailerUrl", prev.trailerUrl),
       steamAppId: extractSteamAppIdFromInput(prev.steamUrl || prev.steamAppId),
       steamUrl: (() => {
         const steamId = extractSteamAppIdFromInput(prev.steamUrl || prev.steamAppId);
         if (steamId) return buildSteamStoreUrl(steamId);
         return normalizeUrlInput(prev.steamUrl);
       })(),
-      gallery: uniqueList(parseListText(prev.gallery).map(normalizeUrlInput)).join("\n"),
+      gallery: uniqueList(parseListText(prev.gallery).map(normalizeGalleryMediaUrl)).join("\n"),
       downloadUrls: uniqueList(parseListText(prev.downloadUrls).map(normalizeUrlInput)).join("\n")
     }));
     setNoticeState("URLs normalizadas com sucesso.", false);
@@ -1301,7 +1346,7 @@ export function AdminAppClient() {
   }
 
   function setGallery(items: string[]) {
-    updateField("gallery", uniqueList(items.map(normalizeUrlInput)).join("\n"));
+    updateField("gallery", uniqueList(items.map(normalizeGalleryMediaUrl)).join("\n"));
   }
 
   function addGenresFromInput() {
@@ -1323,7 +1368,7 @@ export function AdminAppClient() {
   }
 
   function addGalleryFromInput() {
-    const next = uniqueList(parseListText(galleryInput).map(normalizeUrlInput));
+    const next = uniqueList(parseListText(galleryInput).map(normalizeGalleryMediaUrl));
     if (next.length === 0) return;
     setGallery([...galleryItems, ...next]);
     setGalleryInput("");
@@ -2000,18 +2045,18 @@ export function AdminAppClient() {
       payload.append("archivePassword", form.archivePassword.trim());
       payload.append("installDirName", form.installDirName.trim());
       payload.append("launchExecutable", form.launchExecutable.trim());
-      payload.append("imageUrl", normalizeUrlInput(form.imageUrl));
-      payload.append("cardImageUrl", normalizeUrlInput(form.cardImageUrl));
-      payload.append("bannerUrl", normalizeUrlInput(form.bannerUrl));
-      payload.append("logoUrl", normalizeUrlInput(form.logoUrl));
-      payload.append("trailerUrl", normalizeUrlInput(form.trailerUrl));
+      payload.append("imageUrl", normalizeMediaUrlForField("imageUrl", form.imageUrl));
+      payload.append("cardImageUrl", normalizeMediaUrlForField("cardImageUrl", form.cardImageUrl));
+      payload.append("bannerUrl", normalizeMediaUrlForField("bannerUrl", form.bannerUrl));
+      payload.append("logoUrl", normalizeMediaUrlForField("logoUrl", form.logoUrl));
+      payload.append("trailerUrl", normalizeMediaUrlForField("trailerUrl", form.trailerUrl));
       payload.append("developedBy", form.developedBy.trim());
       payload.append("publishedBy", form.publishedBy.trim());
       payload.append("releaseDate", form.releaseDate.trim());
       payload.append("steamAppId", steamIdValue);
       payload.append("steamUrl", derivedSteamUrl);
       payload.append("genres", JSON.stringify(uniqueList(parseListText(form.genres))));
-      payload.append("gallery", JSON.stringify(uniqueList(parseListText(form.gallery).map(normalizeUrlInput))));
+      payload.append("gallery", JSON.stringify(uniqueList(parseListText(form.gallery).map(normalizeGalleryMediaUrl))));
       payload.append("downloadUrls", JSON.stringify(downloadUrlItems));
       payload.append("sizeBytes", form.sizeBytes.trim());
       payload.append("sizeLabel", form.sizeLabel.trim());
