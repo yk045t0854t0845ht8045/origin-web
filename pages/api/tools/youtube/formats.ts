@@ -43,7 +43,9 @@ export default async function handler(req, res) {
         durationLabel: result.durationLabel,
         thumbnailUrl: result.thumbnailUrl
       },
-      formats: result.formats
+      formats: result.formats,
+      sourceMode: result.sourceMode || "full",
+      warning: result.warning || ""
     });
   } catch (error) {
     const message = String(error?.message || "Falha ao ler qualidades do YouTube.");
@@ -53,7 +55,7 @@ export default async function handler(req, res) {
         ? 400
         : lower.includes("429")
           ? 429
-          : lower.includes("410")
+          : lower.includes("410") || lower.includes("anti-bot") || lower.includes("not a bot")
             ? 503
             : 502;
     res.status(status).json({

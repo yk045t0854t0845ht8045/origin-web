@@ -9,5 +9,6 @@ data/*.db
 data/*.db-*
 public/uploads/gallery/*
 uploads-temp/*
+*-player-script.js
 !uploads-temp/.gitkeep
 !data/.gitkeep

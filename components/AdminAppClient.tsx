@@ -144,6 +144,8 @@ type YoutubeQualityOption = {
   height: number;
   estimatedBytes: number;
   estimatedSizeLabel: string;
+  source?: string;
+  downloadUrl?: string;
 };
 
 type EditorDraft = {
@@ -1795,6 +1797,8 @@ export function AdminAppClient() {
         ok?: boolean;
         video?: YoutubeVideoMeta;
         formats?: YoutubeQualityOption[];
+        warning?: string;
+        sourceMode?: string;
         message?: string;
         error?: string;
       } | null;
@@ -1812,6 +1816,10 @@ export function AdminAppClient() {
       setYoutubeQualityOptions(options);
       const preferred = options.find((entry) => entry.hasAudio) || options[0];
       setYoutubeSelectedItag(String(preferred?.itag || ""));
+      const warning = String(json?.warning || "").trim();
+      if (warning) {
+        setYoutubeError(warning);
+      }
       youtubeLastLoadedUrlRef.current = normalizedUrl;
     } catch (error) {
       if (requestId !== youtubeRequestSeqRef.current) {
@@ -1839,11 +1847,18 @@ export function AdminAppClient() {
     setYoutubeDownloading(true);
     setYoutubeError("");
     try {
-      const downloadUrl = `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(
-        youtubeSelectedItag
-      )}`;
+      const directDownloadUrl = String(selectedYoutubeQuality?.downloadUrl || "").trim();
+      const downloadUrl = directDownloadUrl
+        ? directDownloadUrl
+        : `/api/tools/youtube/download?url=${encodeURIComponent(normalizedUrl)}&itag=${encodeURIComponent(
+            youtubeSelectedItag
+          )}`;
       const anchor = document.createElement("a");
       anchor.href = downloadUrl;
+      anchor.rel = "noopener noreferrer";
+      if (directDownloadUrl) {
+        anchor.target = "_blank";
+      }
       anchor.style.display = "none";
       document.body.appendChild(anchor);
       anchor.click();

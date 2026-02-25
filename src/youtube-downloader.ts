@@ -5,6 +5,8 @@ const YOUTUBE_INFO_TIMEOUT_MS = 15000;
 const YOUTUBE_INFO_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const youtubeInfoCache = new Map();
+const INFO_MODE_FULL = "full";
+const INFO_MODE_BASIC = "basic";
 
 const YTDL_CLIENT_ATTEMPTS = [
   { label: "default", options: {} },
@@ -57,6 +59,63 @@ function extractVideoIdFromYoutubeUrl(value) {
   } catch (_error) {
     return "";
   }
+}
+
+function readStreamingDataFromPlayerResponse(playerResponse) {
+  const source = playerResponse && typeof playerResponse === "object" ? playerResponse : {};
+  const streamingData = source.streamingData || source.streaming_data || {};
+  return streamingData && typeof streamingData === "object" ? streamingData : {};
+}
+
+function normalizeFormatFromPlayerResponse(entry) {
+  const row = entry && typeof entry === "object" ? entry : {};
+  const mimeType = readText(row.mimeType || row.mime_type);
+  const codecsMatch = mimeType.match(/codecs=\"([^\"]+)\"/i);
+  const codecs = codecsMatch?.[1] || "";
+  const hasAudio = Boolean(row.audioQuality || row.audio_quality) || String(codecs).toLowerCase().includes("mp4a");
+  const hasVideo = Boolean(row.width || row.height || row.qualityLabel || row.quality_label) || String(mimeType).toLowerCase().includes("video/");
+  return {
+    itag: parseInteger(row.itag, 0),
+    container: String(row.container || "").trim().toLowerCase() || (mimeType.includes("mp4") ? "mp4" : ""),
+    qualityLabel: readText(row.qualityLabel || row.quality_label || row.quality),
+    quality: readText(row.quality),
+    fps: parseInteger(row.fps, 0),
+    hasAudio,
+    hasVideo,
+    bitrate: parseInteger(row.bitrate, 0),
+    height: parseInteger(row.height, 0),
+    contentLength: row.contentLength ?? row.content_length ?? "",
+    mimeType,
+    mime_type: mimeType,
+    url: readText(row.url),
+    signatureCipher: readText(row.signatureCipher || row.signature_cipher),
+    cipher: readText(row.cipher)
+  };
+}
+
+function normalizeInfoFromBasicInfo(rawInfo) {
+  const info = rawInfo && typeof rawInfo === "object" ? rawInfo : {};
+  const playerResponse = info.player_response && typeof info.player_response === "object" ? info.player_response : {};
+  const videoDetails =
+    info.videoDetails && typeof info.videoDetails === "object"
+      ? info.videoDetails
+      : playerResponse.videoDetails && typeof playerResponse.videoDetails === "object"
+        ? playerResponse.videoDetails
+        : {};
+  const streamingData = readStreamingDataFromPlayerResponse(playerResponse);
+  const combinedFormats = [
+    ...(Array.isArray(streamingData.formats) ? streamingData.formats : []),
+    ...(Array.isArray(streamingData.adaptiveFormats) ? streamingData.adaptiveFormats : []),
+    ...(Array.isArray(streamingData.adaptive_formats) ? streamingData.adaptive_formats : [])
+  ];
+  const formats = combinedFormats.map(normalizeFormatFromPlayerResponse).filter((entry) => parseInteger(entry.itag, 0) > 0);
+
+  return {
+    ...info,
+    videoDetails,
+    formats,
+    __sourceMode: INFO_MODE_BASIC
+  };
 }
 
 function parseInteger(value, fallback = 0) {
@@ -214,6 +273,9 @@ function toFriendlyYoutubeErrorMessage(error) {
   if (rawMessage.includes("Could not extract functions")) {
     return "O parser de formatos do YouTube falhou ao extrair funcoes de assinatura.";
   }
+  if (lower.includes("not a bot") || lower.includes("confirm you're not a bot")) {
+    return "YouTube exigiu verificacao anti-bot para listar formatos completos.";
+  }
   if (lower.includes("timeout") || lower.includes("timed out")) {
     return "Tempo excedido ao consultar YouTube.";
   }
@@ -247,12 +309,14 @@ function estimateContentBytes(format, durationSeconds) {
 
 function mapMp4QualityOptions(info) {
   const durationSeconds = parseInteger(info?.videoDetails?.lengthSeconds, 0);
+  const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
   const formats = Array.isArray(info?.formats) ? info.formats : [];
 
   const candidates = formats.filter((format) => {
     if (!format) return false;
     if (!format.hasVideo) return false;
     if (String(format.container || "").toLowerCase() !== "mp4") return false;
+    if (sourceMode === INFO_MODE_BASIC && !readText(format?.url)) return false;
     return true;
   });
 
@@ -277,7 +341,9 @@ function mapMp4QualityOptions(info) {
       bitrate: parseInteger(format.bitrate, 0),
       height,
       estimatedBytes,
-      estimatedSizeLabel: formatBytesLabel(estimatedBytes)
+      estimatedSizeLabel: formatBytesLabel(estimatedBytes),
+      source: sourceMode === INFO_MODE_BASIC ? "ytdl-basic" : "ytdl",
+      downloadUrl: readText(format?.url)
     };
     if (!current) {
       byVariant.set(key, nextEntry);
@@ -298,6 +364,38 @@ function mapMp4QualityOptions(info) {
     if (b.fps !== a.fps) return b.fps - a.fps;
     return b.bitrate - a.bitrate;
   });
+}
+
+async function getYoutubeBasicInfoFallback(normalizedUrl) {
+  const videoId = readText(ytdl.getURLVideoID(normalizedUrl));
+  if (!videoId) {
+    throw new Error("URL do YouTube invalida.");
+  }
+
+  const canonicalUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  const triedUrls = [normalizedUrl];
+  if (canonicalUrl !== normalizedUrl) {
+    triedUrls.push(canonicalUrl);
+  }
+
+  let lastError = null;
+  for (const targetUrl of triedUrls) {
+    for (const attempt of YTDL_CLIENT_ATTEMPTS) {
+      try {
+        const basicInfo = await withTimeout(
+          ytdl.getBasicInfo(targetUrl, buildYtdlInfoOptions(attempt.options)),
+          YOUTUBE_INFO_TIMEOUT_MS,
+          "Tempo excedido ao consultar YouTube."
+        );
+        return normalizeInfoFromBasicInfo(basicInfo);
+      } catch (error) {
+        lastError = error;
+        clearYtdlCaches();
+      }
+    }
+  }
+
+  throw new Error(toFriendlyYoutubeErrorMessage(lastError));
 }
 
 async function getYoutubeInfo(normalizedUrl) {
@@ -328,10 +426,16 @@ async function getYoutubeInfo(normalizedUrl) {
           "Tempo excedido ao consultar YouTube."
         );
         youtubeInfoCache.set(videoId, {
-          info,
+          info: {
+            ...info,
+            __sourceMode: INFO_MODE_FULL
+          },
           expiresAt: Date.now() + YOUTUBE_INFO_CACHE_TTL_MS
         });
-        return info;
+        return {
+          ...info,
+          __sourceMode: INFO_MODE_FULL
+        };
       } catch (error) {
         lastError = error;
         if (!isRetryableYoutubeError(error)) {
@@ -342,7 +446,12 @@ async function getYoutubeInfo(normalizedUrl) {
     }
   }
 
-  throw new Error(toFriendlyYoutubeErrorMessage(lastError));
+  const basicInfo = await getYoutubeBasicInfoFallback(normalizedUrl);
+  youtubeInfoCache.set(videoId, {
+    info: basicInfo,
+    expiresAt: Date.now() + YOUTUBE_INFO_CACHE_TTL_MS
+  });
+  return basicInfo;
 }
 
 async function getYoutubeFormatsForUrl(urlRaw) {
@@ -367,6 +476,12 @@ async function getYoutubeFormatsForUrl(urlRaw) {
     throw new Error("Nao encontramos formatos MP4 para esse video.");
   }
 
+  const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
+  const warning =
+    sourceMode === INFO_MODE_BASIC
+      ? "YouTube aplicou bloqueio anti-bot. Listando apenas formatos com URL direta disponivel no momento."
+      : "";
+
   return {
     videoId,
     normalizedUrl,
@@ -374,7 +489,9 @@ async function getYoutubeFormatsForUrl(urlRaw) {
     durationSeconds,
     durationLabel,
     thumbnailUrl,
-    formats
+    formats,
+    warning,
+    sourceMode
   };
 }
 
@@ -393,6 +510,7 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
   }
 
   const info = await getYoutubeInfo(normalizedUrl);
+  const sourceMode = readText(info?.__sourceMode, INFO_MODE_FULL);
   const format = (Array.isArray(info?.formats) ? info.formats : []).find((entry) => {
     return parseInteger(entry?.itag, 0) === selectedItag && String(entry?.container || "").toLowerCase() === "mp4" && entry?.hasVideo;
   });
@@ -400,7 +518,12 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
   if (!format) {
     throw new Error("Formato selecionado nao encontrado. Atualize a lista de qualidades.");
   }
-  if (!readText(format?.url)) {
+  const directUrl = readText(format?.url);
+  if (sourceMode === INFO_MODE_BASIC) {
+    if (!directUrl) {
+      throw new Error("Formato selecionado indisponivel no modo anti-bot. Escolha outra qualidade.");
+    }
+  } else if (!directUrl && !readText(format?.signatureCipher || format?.signature_cipher || format?.cipher)) {
     throw new Error("Formato selecionado esta temporariamente indisponivel no YouTube. Escolha outra qualidade.");
   }
 
@@ -413,7 +536,9 @@ async function resolveDownloadTarget(urlRaw, itagRaw) {
     info,
     format,
     outputFileName,
-    selectedItag
+    selectedItag,
+    sourceMode,
+    directUrl
   };
 }
 

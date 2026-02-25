@@ -42,6 +42,14 @@ export default async function handler(req, res) {
 
   try {
     const target = await resolveDownloadTarget(url, itag);
+    const directUrl = String(target?.directUrl || "").trim();
+    if (String(target?.sourceMode || "").trim() === "basic" && directUrl) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.redirect(302, directUrl);
+      return;
+    }
     const contentLength = Number(target?.format?.contentLength || 0);
 
     res.setHeader("Content-Type", "video/mp4");
@@ -82,7 +90,7 @@ export default async function handler(req, res) {
         ? 400
         : lower.includes("429")
           ? 429
-          : lower.includes("410")
+          : lower.includes("410") || lower.includes("anti-bot") || lower.includes("not a bot")
             ? 503
             : 502;
     res.status(status).json({
