@@ -1541,6 +1541,54 @@ export function AdminAppClient() {
     }
   }
 
+  async function loadDashboardBootstrap() {
+    setGamesLoading(true);
+    setAdminsLoading(true);
+    setMaintenanceLoading(true);
+    try {
+      const response = await fetchApiWithTimeout("/api/dashboard/bootstrap", {}, 18000);
+      const json = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        games?: LauncherGame[];
+        admins?: AdminRecord[];
+        maintenance?: unknown;
+        warnings?: string[];
+        message?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || !json?.ok) {
+        throw new Error(json?.message || json?.error || `Falha ao carregar dashboard (${response.status}).`);
+      }
+
+      setGames(Array.isArray(json.games) ? json.games : []);
+      setAdmins(Array.isArray(json.admins) ? json.admins : []);
+      const normalizedFlag = normalizeMaintenanceFlag(json.maintenance);
+      setMaintenanceFlag(normalizedFlag);
+      setMaintenanceTitleDraft(normalizedFlag.title);
+      setMaintenanceMessageDraft(normalizedFlag.message);
+
+      const warnings = Array.isArray(json.warnings) ? json.warnings.filter(Boolean) : [];
+      if (warnings.length > 0) {
+        setNoticeState(warnings[0], true);
+      }
+    } catch (error) {
+      setGames([]);
+      setAdmins([]);
+      setMaintenanceFlag(DEFAULT_MAINTENANCE_FLAG);
+      setMaintenanceTitleDraft(DEFAULT_MAINTENANCE_FLAG.title);
+      setMaintenanceMessageDraft(DEFAULT_MAINTENANCE_FLAG.message);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao carregar dashboard. Tente novamente.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao carregar dashboard.", true);
+      }
+    } finally {
+      setGamesLoading(false);
+      setAdminsLoading(false);
+      setMaintenanceLoading(false);
+    }
+  }
+
   async function saveMaintenanceFlag(next: {
     enabled?: boolean;
     title?: string;
@@ -1601,7 +1649,7 @@ export function AdminAppClient() {
   }
 
   async function refreshDashboardData() {
-    await Promise.all([loadGames(), loadAdmins(), loadMaintenanceFlag()]);
+    await loadDashboardBootstrap();
     setNoticeState("Dashboard atualizado.", false);
   }
 
@@ -1655,9 +1703,7 @@ export function AdminAppClient() {
 
   useEffect(() => {
     if (!viewer.authenticated || !viewer.isAdmin) return;
-    void loadGames();
-    void loadAdmins();
-    void loadMaintenanceFlag();
+    void loadDashboardBootstrap();
   }, [viewer.authenticated, viewer.isAdmin]);
 
   useEffect(() => {
