@@ -148,14 +148,33 @@ function formatSupabaseError(status, payload, rawText, context, config) {
   return `[ADMINS_SUPABASE_${context}_HTTP_${status}] ${parts.join(" | ")}`;
 }
 
+const SUPABASE_REQUEST_TIMEOUT_MS = 8000;
+
 async function requestSupabase(config, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   const hasBody = options.body !== undefined;
-  const response = await fetch(buildSupabaseUrl(config, options.query), {
-    method,
-    headers: buildSupabaseHeaders(config, hasBody, options.prefer || ""),
-    body: hasBody ? JSON.stringify(options.body) : undefined
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SUPABASE_REQUEST_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(buildSupabaseUrl(config, options.query), {
+      method,
+      headers: buildSupabaseHeaders(config, hasBody, options.prefer || ""),
+      body: hasBody ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        `[ADMINS_SUPABASE_${String(options.context || method).toUpperCase()}_TIMEOUT] Supabase nao respondeu em ${
+          SUPABASE_REQUEST_TIMEOUT_MS / 1000
+        }s.`
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const rawText = await response.text();
   const payload = parseJsonSafe(rawText);

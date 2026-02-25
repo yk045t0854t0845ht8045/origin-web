@@ -1364,10 +1364,9 @@ function createServer() {
   const app = express();
   app.disable("x-powered-by");
 
-  app.use((req, _res, nextMiddleware) => {
-    void ensureBackendReady()
-      .then(() => nextMiddleware())
-      .catch(nextMiddleware);
+  // Initialize admin cache/bootstrap in background. Do not block /api/me.
+  void ensureBackendReady().catch((error) => {
+    console.warn("[origin-web-admin] background initialize failed:", error?.message || error);
   });
 
   app.use(express.json({ limit: "4mb" }));

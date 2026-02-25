@@ -1393,8 +1393,10 @@ export function AdminAppClient() {
 
   async function loadViewer() {
     setViewerLoading(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
     try {
-      const response = await fetch("/api/me", { credentials: "include" });
+      const response = await fetch("/api/me", { credentials: "include", signal: controller.signal });
       if (!response.ok) throw new Error(`Falha ao validar sessao (${response.status}).`);
       const json = (await response.json()) as ViewerState;
       setViewer({
@@ -1416,8 +1418,13 @@ export function AdminAppClient() {
       if (json.adminError) setNoticeState(String(json.adminError), true);
     } catch (error) {
       setViewer(EMPTY_VIEWER);
-      setNoticeState(error instanceof Error ? error.message : "Falha ao validar sessao.", true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("A validacao de sessao demorou demais (/api/me). Tente novamente em alguns segundos.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao validar sessao.", true);
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setViewerLoading(false);
     }
   }
