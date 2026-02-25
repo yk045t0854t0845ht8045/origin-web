@@ -6,7 +6,7 @@ const STEAM_AUTH_STATE_COOKIE_NAME = "origin_steam_auth_state";
 const ADMIN_AUTH_COOKIE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const STEAM_AUTH_STATE_TTL_MS = 1000 * 60 * 10;
 const STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/login";
-const SUPABASE_TIMEOUT_MS = 8000;
+const SUPABASE_TIMEOUT_MS = 5000;
 const STEAM_SUMMARY_FETCH_LIMIT = 100;
 const STEAM_SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_BOOTSTRAP_ADMIN_IDS = ["76561199481226329"];
@@ -721,17 +721,15 @@ async function buildViewerFromRequest(req) {
   let isAdmin = Boolean(bootstrapRole);
   let adminStorage = providerInfo.useSupabase ? "supabase" : "local";
 
-  if (providerInfo.useSupabase) {
+  if (providerInfo.useSupabase && !bootstrapRole) {
     const remote = await fetchAdminFromSupabase(user.steamId);
     adminStorage = remote.mode;
     if (remote.error) {
-      if (!bootstrapRole) {
-        adminError = remote.error;
-      }
+      adminError = remote.error;
     } else if (remote.admin) {
       isAdmin = true;
       resolvedRole = remote.admin.staffRole;
-    } else if (!bootstrapRole) {
+    } else {
       isAdmin = false;
       resolvedRole = "";
     }

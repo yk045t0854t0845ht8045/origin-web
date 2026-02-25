@@ -149,7 +149,7 @@ function formatSupabaseError(status, payload, rawText, context, config) {
   return `[ADMINS_SUPABASE_${context}_HTTP_${status}] ${parts.join(" | ")}`;
 }
 
-const SUPABASE_REQUEST_TIMEOUT_MS = 8000;
+const SUPABASE_REQUEST_TIMEOUT_MS = 5000;
 
 async function requestSupabase(config, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
@@ -289,12 +289,8 @@ function createAdminStore(config, db) {
       return;
     }
 
-    const remoteAdmins = await fetchRemoteAdmins();
-    const existingIds = new Set(remoteAdmins.map((entry) => entry.steamId));
     const timestamp = nowIso();
-    const missingRows = normalizedEntries
-      .filter((entry) => !existingIds.has(entry.steamId))
-      .map((entry) => ({
+    const rows = normalizedEntries.map((entry) => ({
         steam_id: entry.steamId,
         staff_name: entry.staffName || "Staff",
         staff_role: entry.staffRole || "staff",
@@ -302,7 +298,7 @@ function createAdminStore(config, db) {
         updated_at: timestamp
       }));
 
-    if (!missingRows.length) {
+    if (!rows.length) {
       return;
     }
 
@@ -314,7 +310,7 @@ function createAdminStore(config, db) {
           on_conflict: "steam_id"
         },
         prefer: "resolution=ignore-duplicates,return=minimal",
-        body: missingRows
+        body: rows
       });
     } catch (error) {
       const message = String(error?.message || "");

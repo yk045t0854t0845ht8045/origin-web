@@ -26,8 +26,8 @@ const STEAM_AUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const STEAM_SUMMARY_FETCH_LIMIT = 100;
 const STEAM_SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000;
 const STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/login";
-const SUPABASE_FETCH_TIMEOUT_MS = 12000;
-const SUPABASE_FETCH_RETRIES = 1;
+const SUPABASE_FETCH_TIMEOUT_MS = 6000;
+const SUPABASE_FETCH_RETRIES = 0;
 
 const STAFF_ROLE = Object.freeze({
   DEVELOPER: "developer",
@@ -71,6 +71,7 @@ const launcherGamesCache = {
 let adminStoreReady = false;
 let adminStoreInitError = null;
 let adminStoreInitPromise = null;
+let adminStoreWarmupTriggered = false;
 
 const isDev = process.env.NODE_ENV !== "production";
 const useSecureCookies = !isDev;
@@ -1287,7 +1288,7 @@ async function buildViewer(req) {
   let resolvedRole = bootstrapRole || "";
   let adminRecord = null;
 
-  if (steamId) {
+  if (steamId && !bootstrapRole) {
     try {
       adminRecord = await adminStore.getAdminBySteamId(steamId);
       if (adminRecord) {
@@ -1486,34 +1487,23 @@ function createServer() {
   const app = express();
   app.disable("x-powered-by");
 
+  if (!adminStoreWarmupTriggered) {
+    adminStoreWarmupTriggered = true;
+    void ensureAdminStoreReady().catch((error) => {
+      adminStoreInitError = error;
+      console.warn("[origin-web-admin] warmup adminStore falhou:", String(error?.message || error));
+    });
+  }
+
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ extended: true }));
-  app.use((req, res, nextMiddleware) => {
-    void ensureAdminStoreReady()
-      .then(() => {
-        nextMiddleware();
-      })
-      .catch((error) => {
-        let hasLocalAdmins = false;
-        try {
-          hasLocalAdmins = typeof db.countAdmins === "function" && db.countAdmins() > 0;
-        } catch (_snapshotError) {
-          hasLocalAdmins = false;
-        }
-        if (hasLocalAdmins) {
-          console.warn(
-            "[origin-web-admin] adminStore.initialize falhou; mantendo operacao com snapshot local:",
-            String(error?.message || error)
-          );
-          adminStoreReady = true;
-          nextMiddleware();
-          return;
-        }
-        res.status(503).json({
-          error: "admin_store_init_failed",
-          message: String(error?.message || adminStoreInitError?.message || "Falha ao inicializar store de staffs.")
-        });
+  app.use((_req, _res, nextMiddleware) => {
+    if (!adminStoreReady && !adminStoreInitPromise) {
+      void ensureAdminStoreReady().catch((error) => {
+        adminStoreInitError = error;
       });
+    }
+    nextMiddleware();
   });
 
   app.use((req, res, nextMiddleware) => {
@@ -1547,6 +1537,67 @@ function createServer() {
       adminStorage: adminStore.mode,
       timestamp: new Date().toISOString()
     });
+  });
+
+  app.get("/api/diagnostics/supabase", async (_req, res) => {
+    const hasSupabaseUrl = Boolean(readText(config.supabaseUrl));
+    const hasAnonKey = Boolean(readText(config.supabaseAnonKey));
+    const hasServiceRole = Boolean(readText(config.supabaseServiceRoleKey));
+    const usingKey = hasServiceRole ? "service_role" : hasAnonKey ? "anon" : "none";
+
+    const output = {
+      ok: hasSupabaseUrl && (hasAnonKey || hasServiceRole),
+      hasSupabaseUrl,
+      hasAnonKey,
+      hasServiceRole,
+      usingKey,
+      adminStoreMode: adminStore.mode,
+      adminStoreReady,
+      adminStoreInitError: readText(adminStoreInitError?.message),
+      timestamp: new Date().toISOString()
+    };
+
+    if (!output.ok) {
+      res.status(503).json({
+        ...output,
+        message: "Variaveis de ambiente do Supabase ausentes/incompletas."
+      });
+      return;
+    }
+
+    try {
+      const endpoint = new URL(`${config.supabaseUrl}/rest/v1/admin_steam_ids`);
+      endpoint.searchParams.set("select", "steam_id");
+      endpoint.searchParams.set("limit", "1");
+      const response = await fetchSupabaseWithRetry(endpoint.toString(), {
+        method: "GET",
+        headers: {
+          apikey: config.supabaseRestKey,
+          Authorization: `Bearer ${config.supabaseRestKey}`,
+          Accept: "application/json"
+        }
+      }, 0);
+      const raw = await response.text();
+      const parsed = parseSupabaseResponsePayload(raw);
+      if (!response.ok) {
+        res.status(502).json({
+          ...output,
+          message: buildSupabaseErrorMessage(parsed, response.status, "Falha ao consultar Supabase")
+        });
+        return;
+      }
+
+      res.json({
+        ...output,
+        remoteReachable: true
+      });
+    } catch (error) {
+      res.status(502).json({
+        ...output,
+        remoteReachable: false,
+        message: readText(error?.message, "Falha de conectividade com Supabase.")
+      });
+    }
   });
 
   app.get("/api/runtime-flags/maintenance", requireAdmin, async (_req, res) => {
