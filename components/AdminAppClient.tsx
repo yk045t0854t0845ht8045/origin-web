@@ -1449,11 +1449,14 @@ export function AdminAppClient() {
       const payload = new FormData();
       files.forEach((file) => payload.append("images", file));
 
-      const response = await fetch("/api/upload-gallery-image", {
-        method: "POST",
-        credentials: "include",
-        body: payload
-      });
+      const response = await fetchApiWithTimeout(
+        "/api/upload-gallery-image",
+        {
+          method: "POST",
+          body: payload
+        },
+        45000
+      );
 
       const json = (await response.json().catch(() => null)) as {
         ok?: boolean;
@@ -1474,7 +1477,11 @@ export function AdminAppClient() {
       }
       setNoticeState(`${uploaded.length} imagem(ns) adicionada(s) na galeria.`, false);
     } catch (error) {
-      setNoticeState(error instanceof Error ? error.message : "Falha ao enviar imagens.", true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido no upload das imagens. Tente novamente com menos arquivos.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao enviar imagens.", true);
+      }
     } finally {
       setIsUploadingGallery(false);
       event.target.value = "";
@@ -2210,11 +2217,14 @@ export function AdminAppClient() {
       if (!linkedDriveFileId && editingGame?.google_drive_file_id) payload.append("driveFileId", editingGame.google_drive_file_id);
       if (archiveFile) payload.append("archive", archiveFile);
 
-      const response = await fetch("/api/publish-game", {
-        method: "POST",
-        credentials: "include",
-        body: payload
-      });
+      const response = await fetchApiWithTimeout(
+        "/api/publish-game",
+        {
+          method: "POST",
+          body: payload
+        },
+        90000
+      );
       const json = (await response.json().catch(() => null)) as {
         ok?: boolean;
         game?: { id?: string };
@@ -2233,7 +2243,11 @@ export function AdminAppClient() {
       resetEditor();
       await loadGames();
     } catch (error) {
-      setNoticeState(error instanceof Error ? error.message : "Falha ao salvar jogo.", true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao publicar jogo. Verifique o Drive/Supabase e tente novamente.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao salvar jogo.", true);
+      }
     } finally {
       setIsSaving(false);
     }
