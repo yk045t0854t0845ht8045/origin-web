@@ -315,6 +315,7 @@ function mapMp4QualityOptions(info) {
   const candidates = formats.filter((format) => {
     if (!format) return false;
     if (!format.hasVideo) return false;
+    if (!format.hasAudio) return false;
     if (String(format.container || "").toLowerCase() !== "mp4") return false;
     if (sourceMode === INFO_MODE_BASIC && !readText(format?.url)) return false;
     return true;
@@ -551,7 +552,7 @@ async function getYoutubeFormatsForUrl(urlRaw) {
 
   const warning =
     sourceMode === INFO_MODE_BASIC
-      ? "YouTube aplicou verificacao anti-bot. Usando modo limitado com download direto disponivel."
+      ? "Modo compatibilidade ativado: algumas qualidades podem ficar limitadas temporariamente."
       : "";
 
   return {

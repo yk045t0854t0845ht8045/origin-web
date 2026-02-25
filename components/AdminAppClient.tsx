@@ -1856,7 +1856,7 @@ export function AdminAppClient() {
       setYoutubeSelectedItag(String(preferred?.itag || ""));
       const warning = String(json?.warning || "").trim();
       if (warning) {
-        setYoutubeError(warning);
+        setNoticeState(warning, false);
       }
       youtubeLastLoadedUrlRef.current = normalizedUrl;
     } catch (error) {
