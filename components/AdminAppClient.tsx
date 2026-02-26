@@ -666,17 +666,24 @@ function isSupportedArchiveFileName(fileName: string): boolean {
   return lower.endsWith(".rar") || lower.endsWith(".zip");
 }
 
-function isGoogleDriveFolderLink(value: string): boolean {
+function parseHttpUrlInput(value: string): URL | null {
   const raw = String(value || "").trim();
-  if (!raw) return false;
+  if (!raw) return null;
   try {
     const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
-    const host = String(parsed.hostname || "").toLowerCase();
-    if (!host.includes("drive.google.com")) return false;
-    return /\/folders\/[a-zA-Z0-9_-]+/i.test(parsed.pathname);
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    return parsed;
   } catch (_error) {
-    return false;
+    return null;
   }
+}
+
+function isGoogleDriveFolderLink(value: string): boolean {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) return false;
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("drive.google.com")) return false;
+  return /\/folders\/[a-zA-Z0-9_-]+/i.test(parsed.pathname);
 }
 
 function extractGoogleDriveFileIdFromInput(value: string): string {
@@ -684,20 +691,17 @@ function extractGoogleDriveFileIdFromInput(value: string): string {
   if (!raw) return "";
   if (/^[a-zA-Z0-9_-]{16,}$/.test(raw) && !raw.includes("/")) return raw;
 
-  try {
-    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
-    const host = String(parsed.hostname || "").toLowerCase();
-    if (!host.includes("drive.google.com") && !host.includes("drive.usercontent.google.com")) return "";
+  const parsed = parseHttpUrlInput(raw);
+  if (!parsed) return "";
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("drive.google.com") && !host.includes("drive.usercontent.google.com")) return "";
 
-    const byPath = parsed.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/i)?.[1];
-    if (byPath) return byPath;
+  const byPath = parsed.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/i)?.[1];
+  if (byPath) return byPath;
 
-    const byQuery =
-      String(parsed.searchParams.get("id") || "").trim() || String(parsed.searchParams.get("fileId") || "").trim();
-    if (byQuery && /^[a-zA-Z0-9_-]{16,}$/.test(byQuery)) return byQuery;
-  } catch (_error) {
-    return "";
-  }
+  const byQuery =
+    String(parsed.searchParams.get("id") || "").trim() || String(parsed.searchParams.get("fileId") || "").trim();
+  if (byQuery && /^[a-zA-Z0-9_-]{16,}$/.test(byQuery)) return byQuery;
 
   return "";
 }
@@ -706,6 +710,39 @@ function buildGoogleDriveDirectDownloadUrl(fileId: string): string {
   const clean = String(fileId || "").trim();
   if (!clean) return "";
   return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(clean)}`;
+}
+
+function isDropboxLink(value: string): boolean {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) return false;
+  const host = String(parsed.hostname || "").toLowerCase();
+  return host.includes("dropbox.com") || host.includes("dropboxusercontent.com");
+}
+
+function isDropboxFolderLink(value: string): boolean {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) return false;
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("dropbox.com") && !host.includes("dropboxusercontent.com")) return false;
+  const pathName = String(parsed.pathname || "").toLowerCase();
+  return (
+    pathName.startsWith("/home") ||
+    pathName.includes("/scl/fo/") ||
+    pathName.includes("/sh/") ||
+    pathName.includes("/folder/")
+  );
+}
+
+function buildDropboxDirectDownloadUrl(value: string): string {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) return "";
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("dropbox.com") && !host.includes("dropboxusercontent.com")) return "";
+  if (host.includes("dropbox.com") && !host.includes("dropboxusercontent.com")) {
+    parsed.searchParams.delete("raw");
+    parsed.searchParams.set("dl", "1");
+  }
+  return parsed.toString();
 }
 
 function extractSteamAppIdFromInput(value: string): string {
@@ -1004,18 +1041,19 @@ export function AdminAppClient() {
   const archiveDescriptor = useMemo(
     () => {
       if (archiveFile) return `${archiveFile.name}:${archiveFile.size}`;
+      if (linkedDriveUrl) return linkedDriveFileId ? `drive:${linkedDriveFileId}` : `remote:${linkedDriveUrl}`;
       if (linkedDriveFileId) return `drive:${linkedDriveFileId}`;
       return "";
     },
-    [archiveFile, linkedDriveFileId]
+    [archiveFile, linkedDriveFileId, linkedDriveUrl]
   );
   const currentSnapshot = useMemo(
     () => createFormSnapshot(form, { mode: editorMode, gameId: editingGameId, archiveKey: archiveDescriptor }),
     [form, editorMode, editingGameId, archiveDescriptor]
   );
   const showUploadOnlyStage = useMemo(
-    () => view === "editor" && editorMode === "new" && !archiveFile && !linkedDriveFileId,
-    [view, editorMode, archiveFile, linkedDriveFileId]
+    () => view === "editor" && editorMode === "new" && !archiveFile && !linkedDriveUrl,
+    [view, editorMode, archiveFile, linkedDriveUrl]
   );
   const isDirty = useMemo(
     () => view === "editor" && currentSnapshot !== baseSnapshot,
@@ -1032,12 +1070,14 @@ export function AdminAppClient() {
         buildEditorJsonPayload(form, {
           mode: editorMode,
           gameId: editingGameId || resolvedId,
-          archiveFileName: archiveFile?.name || (linkedDriveFileId ? `drive:${linkedDriveFileId}` : "")
+          archiveFileName:
+            archiveFile?.name ||
+            (linkedDriveFileId ? `drive:${linkedDriveFileId}` : linkedDriveUrl ? `remote:${linkedDriveUrl}` : "")
         }),
         null,
         2
       ),
-    [form, editorMode, editingGameId, resolvedId, archiveFile?.name, linkedDriveFileId]
+    [form, editorMode, editingGameId, resolvedId, archiveFile?.name, linkedDriveFileId, linkedDriveUrl]
   );
 
   const isReleaseDateValid = useMemo(
@@ -1054,7 +1094,17 @@ export function AdminAppClient() {
   const editorChecklist = useMemo(
     () => [
       { label: "Nome e ID prontos", ok: Boolean(form.name.trim() && resolvedId) },
-      { label: "Arquivo vinculado", ok: Boolean(archiveFile || linkedDriveFileId || editingGame?.google_drive_file_id) },
+      {
+        label: "Arquivo vinculado",
+        ok: Boolean(
+          archiveFile ||
+            linkedDriveUrl ||
+            linkedDriveFileId ||
+            editingGame?.google_drive_file_id ||
+            editingGame?.download_url ||
+            editingGame?.download_urls?.[0]
+        )
+      },
       { label: "Capa configurada", ok: Boolean(cardPreviewUrl) },
       { label: "Galeria com imagem", ok: galleryItems.length > 0 },
       { label: "Download URL preenchida", ok: downloadUrlItems.length > 0 },
@@ -1064,8 +1114,11 @@ export function AdminAppClient() {
       form.name,
       resolvedId,
       archiveFile,
+      linkedDriveUrl,
       linkedDriveFileId,
       editingGame?.google_drive_file_id,
+      editingGame?.download_url,
+      editingGame?.download_urls,
       cardPreviewUrl,
       galleryItems.length,
       downloadUrlItems.length,
@@ -1327,7 +1380,9 @@ export function AdminAppClient() {
     const payload = buildEditorJsonPayload(form, {
       mode: editorMode,
       gameId: editingGameId || resolvedId,
-      archiveFileName: archiveFile?.name || (linkedDriveFileId ? `drive:${linkedDriveFileId}` : ""),
+      archiveFileName:
+        archiveFile?.name ||
+        (linkedDriveFileId ? `drive:${linkedDriveFileId}` : linkedDriveUrl ? `remote:${linkedDriveUrl}` : ""),
       includeExportedAt: true
     });
     const serialized = JSON.stringify(payload, null, 2);
@@ -2314,36 +2369,45 @@ export function AdminAppClient() {
     event.target.value = "";
   }
 
-  function continueWithDriveLink() {
+  function continueWithRemoteLink() {
     const normalizedLink = normalizeUrlInput(driveLinkStageInput);
     if (!normalizedLink) {
-      setNoticeState("Cole um link de arquivo do Google Drive para continuar.", true);
+      setNoticeState("Cole um link de arquivo remoto para continuar (Drive/Dropbox).", true);
       return;
     }
     if (isGoogleDriveFolderLink(normalizedLink)) {
-      setNoticeState("Link de pasta detectado. Cole o link do arquivo .rar/.zip.", true);
+      setNoticeState("Link de pasta do Google Drive detectado. Cole o link do arquivo .rar/.zip.", true);
+      return;
+    }
+    if (isDropboxFolderLink(normalizedLink)) {
+      setNoticeState("Link de pasta do Dropbox detectado. Cole o link direto do arquivo .rar/.zip.", true);
       return;
     }
 
     const driveFileId = extractGoogleDriveFileIdFromInput(normalizedLink);
-    if (!driveFileId) {
-      setNoticeState("Nao foi possivel extrair o ID do arquivo do Google Drive. Use um link de arquivo.", true);
+    const dropboxDirectLink = buildDropboxDirectDownloadUrl(normalizedLink);
+    const normalizedHttpUrl = parseHttpUrlInput(normalizedLink)?.toString() || "";
+    const directDownloadLink = driveFileId
+      ? buildGoogleDriveDirectDownloadUrl(driveFileId) || normalizedLink
+      : dropboxDirectLink || normalizedHttpUrl;
+    if (!directDownloadLink) {
+      setNoticeState("Link invalido. Use uma URL http/https de arquivo (Drive/Dropbox).", true);
       return;
     }
-    const directDownloadLink = buildGoogleDriveDirectDownloadUrl(driveFileId);
 
     setArchiveFile(null);
     setLinkedDriveFileId(driveFileId);
-    setLinkedDriveUrl(directDownloadLink || normalizedLink);
-    setDriveLinkStageInput(directDownloadLink || normalizedLink);
+    setLinkedDriveUrl(directDownloadLink);
+    setDriveLinkStageInput(directDownloadLink);
     setIsArchiveDragActive(false);
     archiveDragDepthRef.current = 0;
     const mergedDownloadUrls = uniqueList([
-      directDownloadLink || normalizedLink,
+      directDownloadLink,
       ...parseListText(form.downloadUrls).map(normalizeUrlInput)
     ]);
     updateField("downloadUrls", mergedDownloadUrls.join("\n"));
-    setNoticeState("Link convertido para download direto e aplicado. Agora finalize os metadados e publique.", false);
+    const providerLabel = driveFileId ? "Google Drive" : isDropboxLink(normalizedLink) ? "Dropbox" : "fonte remota";
+    setNoticeState(`Link de ${providerLabel} aplicado. Agora finalize os metadados e publique.`, false);
   }
 
   async function saveGame(event: FormEvent<HTMLFormElement>) {
@@ -2366,8 +2430,8 @@ export function AdminAppClient() {
       setNoticeState("Preencha nome/ID do jogo.", true);
       return;
     }
-    if (editorMode === "new" && !archiveFile && !linkedDriveFileId) {
-      setNoticeState("Para novo jogo, envie o arquivo .rar/.zip ou cole um link de arquivo do Drive.", true);
+    if (editorMode === "new" && !archiveFile && !linkedDriveUrl) {
+      setNoticeState("Para novo jogo, envie o arquivo .rar/.zip ou cole um link de arquivo (Drive/Dropbox).", true);
       return;
     }
     if (!isReleaseDateValid) {
@@ -2446,7 +2510,7 @@ export function AdminAppClient() {
       await loadGames();
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        setNoticeState("Tempo excedido ao publicar jogo. Verifique o Drive/Supabase e tente novamente.", true);
+        setNoticeState("Tempo excedido ao publicar jogo. Verifique a fonte remota/Supabase e tente novamente.", true);
       } else {
         setNoticeState(error instanceof Error ? error.message : "Falha ao salvar jogo.", true);
       }
@@ -3020,33 +3084,36 @@ export function AdminAppClient() {
           <article className="card upload-link-card">
             <header className="upload-link-head">
               <p className="kicker">NOVO JOGO</p>
-              <h2>Cole o link do arquivo no Drive</h2>
+              <h2>Cole o link do arquivo (Drive/Dropbox)</h2>
               <p className="text-muted">
-                Continue apenas com o link do arquivo `.rar/.zip` ja enviado no Google Drive.
+                Continue com o link direto do arquivo `.rar/.zip` no Google Drive ou Dropbox.
               </p>
             </header>
             <label className="upload-link-field">
-              <span>Link de arquivo do Google Drive</span>
+              <span>Link de arquivo remoto</span>
               <input
                 onChange={(event) => setDriveLinkStageInput(event.target.value)}
                 onBlur={() => {
-                  const fileId = extractGoogleDriveFileIdFromInput(driveLinkStageInput);
-                  if (!fileId) return;
-                  const converted = buildGoogleDriveDirectDownloadUrl(fileId);
+                  const normalizedLink = normalizeUrlInput(driveLinkStageInput);
+                  if (!normalizedLink) return;
+                  const fileId = extractGoogleDriveFileIdFromInput(normalizedLink);
+                  const converted = fileId
+                    ? buildGoogleDriveDirectDownloadUrl(fileId)
+                    : buildDropboxDirectDownloadUrl(normalizedLink);
                   if (converted) setDriveLinkStageInput(converted);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    continueWithDriveLink();
+                    continueWithRemoteLink();
                   }
                 }}
-                placeholder="https://drive.google.com/file/d/FILE_ID/view?usp=sharing"
+                placeholder="https://drive.google.com/file/d/FILE_ID/view?usp=sharing ou https://www.dropbox.com/s/... ?dl=1"
                 value={driveLinkStageInput}
               />
             </label>
             <div className="upload-only-actions">
-              <button className="button button-primary" onClick={continueWithDriveLink} type="button">
+              <button className="button button-primary" onClick={continueWithRemoteLink} type="button">
                 Continuar com link
               </button>
               {draftUpdatedAt ? (
@@ -3076,7 +3143,7 @@ export function AdminAppClient() {
                 <button className="button button-ghost" onClick={() => fileInputRef.current?.click()} type="button">
                   {archiveFile ? "Trocar arquivo" : "Selecionar arquivo"}
                 </button>
-                {editorMode === "new" && linkedDriveFileId ? (
+                {editorMode === "new" && linkedDriveUrl ? (
                   <button
                     className="button button-ghost"
                     onClick={() => {
@@ -3095,9 +3162,13 @@ export function AdminAppClient() {
             <div className="file-pill">
               <strong>
                 {archiveFile?.name ||
-                  (linkedDriveFileId
-                    ? "Arquivo remoto (Google Drive)"
-                    : editingGame?.google_drive_file_id
+                  (linkedDriveUrl
+                    ? linkedDriveFileId
+                      ? "Arquivo remoto (Google Drive)"
+                      : isDropboxLink(linkedDriveUrl)
+                        ? "Arquivo remoto (Dropbox)"
+                        : "Arquivo remoto"
+                    : editingGame?.google_drive_file_id || editingGame?.download_url || editingGame?.download_urls?.[0]
                       ? "Sem upload novo"
                       : "Nenhum arquivo")}
               </strong>
@@ -3106,7 +3177,9 @@ export function AdminAppClient() {
                   ? `${Math.max(1, Math.round(archiveFile.size / (1024 * 1024)))} MB`
                   : linkedDriveFileId
                     ? linkedDriveFileId
-                    : editingGame?.google_drive_file_id || "-"}
+                    : linkedDriveUrl
+                      ? compactText(linkedDriveUrl, 72)
+                      : editingGame?.google_drive_file_id || editingGame?.download_url || editingGame?.download_urls?.[0] || "-"}
               </span>
             </div>
             {linkedDriveUrl ? <p className="field-hint">Link remoto ativo: {compactText(linkedDriveUrl, 96)}</p> : null}

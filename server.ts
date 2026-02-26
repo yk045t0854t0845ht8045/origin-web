@@ -356,21 +356,59 @@ function extractSteamAppId(value) {
   return 0;
 }
 
-function isGoogleDriveFolderLink(value) {
+function parseHttpUrlInput(value) {
   const raw = String(value ?? "").trim();
   if (!raw) {
-    return false;
+    return null;
   }
   try {
-    const parsed = new URL(raw);
-    const host = String(parsed.hostname || "").toLowerCase();
-    if (!host.includes("drive.google.com")) {
-      return false;
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
     }
-    return /\/folders\/[a-zA-Z0-9_-]+/i.test(parsed.pathname);
+    return parsed;
   } catch (_error) {
+    return null;
+  }
+}
+
+function isGoogleDriveFolderLink(value) {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) {
     return false;
   }
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("drive.google.com")) {
+    return false;
+  }
+  return /\/folders\/[a-zA-Z0-9_-]+/i.test(parsed.pathname);
+}
+
+function isDropboxLink(value) {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) {
+    return false;
+  }
+  const host = String(parsed.hostname || "").toLowerCase();
+  return host.includes("dropbox.com") || host.includes("dropboxusercontent.com");
+}
+
+function isDropboxFolderLink(value) {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) {
+    return false;
+  }
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("dropbox.com") && !host.includes("dropboxusercontent.com")) {
+    return false;
+  }
+  const pathName = String(parsed.pathname || "").toLowerCase();
+  return (
+    pathName.startsWith("/home") ||
+    pathName.includes("/scl/fo/") ||
+    pathName.includes("/sh/") ||
+    pathName.includes("/folder/")
+  );
 }
 
 function extractGoogleDriveFileId(value) {
@@ -382,31 +420,89 @@ function extractGoogleDriveFileId(value) {
     return raw;
   }
 
-  try {
-    const parsed = new URL(raw);
-    const host = String(parsed.hostname || "").toLowerCase();
-    const pathName = String(parsed.pathname || "");
+  const parsed = parseHttpUrlInput(raw);
+  if (!parsed) {
+    return "";
+  }
+  const host = String(parsed.hostname || "").toLowerCase();
+  const pathName = String(parsed.pathname || "");
 
-    if (!host.includes("drive.google.com") && !host.includes("drive.usercontent.google.com")) {
-      return "";
-    }
-
-    const byPath = pathName.match(/\/file\/d\/([a-zA-Z0-9_-]+)/i)?.[1];
-    if (byPath) {
-      return byPath;
-    }
-
-    const byQuery =
-      String(parsed.searchParams.get("id") || "").trim() ||
-      String(parsed.searchParams.get("fileId") || "").trim();
-    if (byQuery && /^[a-zA-Z0-9_-]{16,}$/.test(byQuery)) {
-      return byQuery;
-    }
-  } catch (_error) {
+  if (!host.includes("drive.google.com") && !host.includes("drive.usercontent.google.com")) {
     return "";
   }
 
+  const byPath = pathName.match(/\/file\/d\/([a-zA-Z0-9_-]+)/i)?.[1];
+  if (byPath) {
+    return byPath;
+  }
+
+  const byQuery =
+    String(parsed.searchParams.get("id") || "").trim() ||
+    String(parsed.searchParams.get("fileId") || "").trim();
+  if (byQuery && /^[a-zA-Z0-9_-]{16,}$/.test(byQuery)) {
+    return byQuery;
+  }
+
   return "";
+}
+
+function createDropboxDirectDownloadUrl(value) {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) {
+    return "";
+  }
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (!host.includes("dropbox.com") && !host.includes("dropboxusercontent.com")) {
+    return "";
+  }
+  if (host.includes("dropbox.com") && !host.includes("dropboxusercontent.com")) {
+    parsed.searchParams.delete("raw");
+    parsed.searchParams.set("dl", "1");
+  }
+  return parsed.toString();
+}
+
+function normalizeRemoteDownloadUrl(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (isDropboxLink(raw)) {
+    return createDropboxDirectDownloadUrl(raw);
+  }
+  const parsed = parseHttpUrlInput(raw);
+  return parsed ? parsed.toString() : "";
+}
+
+function detectDownloadSourceKind(value) {
+  const parsed = parseHttpUrlInput(value);
+  if (!parsed) {
+    return "http";
+  }
+  const host = String(parsed.hostname || "").toLowerCase();
+  if (
+    host.includes("drive.google.com") ||
+    host.includes("drive.usercontent.google.com") ||
+    host.includes("drive.googleusercontent.com") ||
+    host.includes("googleapis.com")
+  ) {
+    return "google-drive";
+  }
+  if (host.includes("dropbox.com") || host.includes("dropboxusercontent.com")) {
+    return "dropbox";
+  }
+  return "http";
+}
+
+function buildDownloadSourcePriority(kind, index = 0) {
+  const safeIndex = Math.max(0, Number(index) || 0);
+  if (kind === "google-drive") {
+    return 91 + safeIndex * 0.1;
+  }
+  if (kind === "dropbox") {
+    return 32 + safeIndex * 0.1;
+  }
+  return 40 + safeIndex * 0.1;
 }
 
 function createDriveDownloadUrl(fileId, withConfirm = false) {
@@ -419,27 +515,69 @@ function createDriveDirectDownloadUrl(fileId) {
   return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(String(fileId || "").trim())}`;
 }
 
-function createDownloadSources(gameId, fileId) {
-  return [
-    {
-      url: createDriveDownloadUrl(fileId, false),
-      label: `driveusercontent-${String(gameId || "").trim()}`,
-      kind: "google-drive",
-      priority: 5
-    },
-    {
-      url: createDriveDownloadUrl(fileId, true),
-      label: "driveusercontent-confirm",
-      kind: "google-drive",
-      priority: 6
-    },
-    {
-      url: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(String(fileId || "").trim())}`,
-      label: "drive-uc-fallback",
-      kind: "google-drive",
-      priority: 8
+function buildGoogleApiDownloadUrl(fileId, apiKey) {
+  const cleanId = String(fileId || "").trim();
+  const cleanApiKey = String(apiKey || "").trim();
+  if (!cleanId || !cleanApiKey) {
+    return "";
+  }
+  const params = new URLSearchParams({
+    alt: "media",
+    supportsAllDrives: "true",
+    acknowledgeAbuse: "true",
+    key: cleanApiKey
+  });
+  return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(cleanId)}?${params.toString()}`;
+}
+
+function createDownloadSources(gameId, fileId, googleApiKey = "", downloadUrls = []) {
+  const cleanGameId = String(gameId || "").trim();
+  const cleanFileId = String(fileId || "").trim();
+  const sources = [];
+  const seenUrls = new Set();
+
+  const pushSource = (url, label, kind, priority) => {
+    const normalized = normalizeRemoteDownloadUrl(url);
+    if (!normalized || seenUrls.has(normalized)) {
+      return;
     }
-  ];
+    seenUrls.add(normalized);
+    sources.push({
+      url: normalized,
+      label: String(label || "").trim(),
+      kind: String(kind || "").trim() || "http",
+      priority: Number(priority) || 0
+    });
+  };
+
+  if (cleanFileId) {
+    pushSource(createDriveDownloadUrl(cleanFileId, false), `driveusercontent-${cleanGameId || "source"}`, "google-drive", 88);
+    pushSource(createDriveDownloadUrl(cleanFileId, true), "driveusercontent-confirm", "google-drive", 89);
+    pushSource(
+      `https://drive.google.com/uc?export=download&id=${encodeURIComponent(cleanFileId)}`,
+      "drive-uc-fallback",
+      "google-drive",
+      92
+    );
+
+    const apiUrl = buildGoogleApiDownloadUrl(cleanFileId, googleApiKey);
+    if (apiUrl) {
+      pushSource(apiUrl, "google-drive-api", "google-drive", 85.5);
+    }
+  }
+
+  const normalizedUrls = Array.isArray(downloadUrls)
+    ? downloadUrls
+        .map((entry) => normalizeRemoteDownloadUrl(entry))
+        .filter(Boolean)
+    : [];
+  normalizedUrls.forEach((url, index) => {
+    const kind = detectDownloadSourceKind(url);
+    const labelPrefix = kind === "google-drive" ? "google-drive" : kind === "dropbox" ? "dropbox" : "mirror";
+    pushSource(url, `${labelPrefix}-${cleanGameId || "source"}-${index + 1}`, kind, buildDownloadSourcePriority(kind, index));
+  });
+
+  return sources.sort((a, b) => Number(a.priority || 0) - Number(b.priority || 0));
 }
 
 function parseSupabaseResponsePayload(rawText) {
@@ -1431,7 +1569,8 @@ function createServer() {
 
       let uploadResult = null;
       const driveLinkInput = readText(req.body?.driveLink || req.body?.drive_link);
-      const hasFolderLinkInput = isGoogleDriveFolderLink(driveLinkInput);
+      const hasGoogleDriveFolderLinkInput = isGoogleDriveFolderLink(driveLinkInput);
+      const hasDropboxFolderLinkInput = isDropboxFolderLink(driveLinkInput);
       let driveFileId = readText(req.body?.driveFileId || req.body?.drive_file_id);
       if (!driveFileId && driveLinkInput) {
         driveFileId = readText(extractGoogleDriveFileId(driveLinkInput));
@@ -1449,36 +1588,58 @@ function createServer() {
 
       const galleryInput = parseArrayInput(req.body?.gallery || req.body?.galleryUrls || req.body?.gallery_urls);
       const genresInput = parseArrayInput(req.body?.genres || req.body?.genreTags || req.body?.genre_tags);
-      const downloadUrlsInput = parseArrayInput(req.body?.downloadUrls || req.body?.download_urls);
+      const downloadUrlsInputRaw = parseArrayInput(req.body?.downloadUrls || req.body?.download_urls);
+      const downloadUrlsInput = Array.from(
+        new Set(
+          downloadUrlsInputRaw
+            .map((entry) => normalizeRemoteDownloadUrl(entry))
+            .filter(Boolean)
+        )
+      );
       if (!driveFileId && downloadUrlsInput.length > 0) {
-        driveFileId = readText(extractGoogleDriveFileId(downloadUrlsInput[0]));
+        for (const candidate of downloadUrlsInput) {
+          const extractedId = readText(extractGoogleDriveFileId(candidate));
+          if (extractedId) {
+            driveFileId = extractedId;
+            break;
+          }
+        }
       }
       if (!driveFileId && existingGame?.google_drive_file_id) {
         driveFileId = readText(existingGame.google_drive_file_id);
       }
-      if (!driveFileId) {
-        res.status(400).json({
-          error: "missing_drive_id",
-          message: hasFolderLinkInput
-            ? "Link de pasta detectado. Cole um link de arquivo do Google Drive (.rar/.zip), nao de pasta."
-            : "Envie um .rar/.zip, informe driveFileId, ou cole um link de arquivo do Google Drive."
-        });
-        return;
-      }
-      const directDownloadUrl = createDriveDirectDownloadUrl(driveFileId);
+      const directDownloadUrl = driveFileId ? createDriveDirectDownloadUrl(driveFileId) : "";
+      const normalizedDriveLinkInput = normalizeRemoteDownloadUrl(driveLinkInput);
       const gallery = galleryInput.length ? galleryInput : normalizeJsonArrayField(existingGame?.gallery);
       const genres = genresInput.length ? genresInput : normalizeJsonArrayField(existingGame?.genres);
       const downloadUrls = downloadUrlsInput.length
         ? downloadUrlsInput
-        : driveLinkInput
+        : directDownloadUrl
           ? [directDownloadUrl]
-        : normalizeJsonArrayField(existingGame?.download_urls);
+          : normalizedDriveLinkInput
+            ? [normalizedDriveLinkInput]
+            : normalizeJsonArrayField(existingGame?.download_urls);
+      if (!driveFileId && downloadUrls.length === 0) {
+        res.status(400).json({
+          error: "missing_download_source",
+          message: hasGoogleDriveFolderLinkInput
+            ? "Link de pasta detectado. Cole um link de arquivo do Google Drive (.rar/.zip), nao de pasta."
+            : hasDropboxFolderLinkInput
+              ? "Link de pasta detectado. Cole o link direto do arquivo no Dropbox (.rar/.zip), nao de pasta."
+              : "Envie um .rar/.zip, informe driveFileId ou adicione ao menos um link de download em downloadUrls."
+        });
+        return;
+      }
       const sizeBytesRaw = readText(req.body?.sizeBytes || req.body?.size_bytes, readText(existingGame?.size_bytes));
       const sizeBytes = sizeBytesRaw || String(parsePositiveIntegerInput(req.file?.size, 0));
       const steamAppId =
         parsePositiveIntegerInput(req.body?.steamAppId || req.body?.steam_app_id, 0) ||
         extractSteamAppId(req.body?.steamUrl || req.body?.steam_url) ||
         parsePositiveIntegerInput(existingGame?.steam_app_id, 0);
+      const resolvedGoogleApiKey = readText(
+        req.body?.googleApiKey || req.body?.google_api_key,
+        readText(existingGame?.google_api_key)
+      );
 
       const gamePayload = {
         id,
@@ -1498,18 +1659,18 @@ function createServer() {
           req.body?.checksumSha256 || req.body?.checksum_sha256,
           readText(existingGame?.checksum_sha256)
         ),
-        download_url: readText(downloadUrls[0], createDriveDownloadUrl(driveFileId, false)),
+        download_url: readText(
+          downloadUrls[0],
+          driveFileId ? createDriveDownloadUrl(driveFileId, false) : readText(existingGame?.download_url)
+        ),
         download_urls: downloadUrls,
-        download_sources: createDownloadSources(id, driveFileId),
+        download_sources: createDownloadSources(id, driveFileId, resolvedGoogleApiKey, downloadUrls),
         google_drive_file_id: driveFileId,
         local_archive_file: readText(
           req.body?.localArchiveFile || req.body?.local_archive_file,
           readText(existingGame?.local_archive_file)
         ),
-        google_api_key: readText(
-          req.body?.googleApiKey || req.body?.google_api_key,
-          readText(existingGame?.google_api_key)
-        ),
+        google_api_key: resolvedGoogleApiKey,
         install_dir_name: readText(
           req.body?.installDirName || req.body?.install_dir_name,
           readText(existingGame?.install_dir_name, name)

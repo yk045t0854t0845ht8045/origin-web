@@ -222,6 +222,9 @@ const googleDrivePathPrefix = (() => {
 const googleDrivePublicLink = parseBoolean(process.env.GOOGLE_DRIVE_PUBLIC_LINK, false);
 const googleDriveKeyFile = String(process.env.GOOGLE_DRIVE_KEY_FILE || "").trim();
 const googleServiceAccountJson = String(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
+const googleApiKey = String(
+  process.env.WPLAY_GOOGLE_API_KEY || process.env.WYZER_GOOGLE_API_KEY || process.env.GOOGLE_API_KEY || ""
+).trim();
 const supabaseUrl = String(
   process.env.SUPABASE_URL ||
     process.env.SUPABASE_PROJECT_URL ||
@@ -277,6 +280,7 @@ module.exports = {
   googleDrivePublicLink,
   googleDriveKeyFile,
   googleServiceAccountJson,
+  googleApiKey,
   supabaseUrl,
   supabaseAnonKey,
   supabaseServiceRoleKey,
