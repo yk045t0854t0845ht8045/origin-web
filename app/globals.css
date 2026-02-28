@@ -672,15 +672,16 @@ body {
   gap: 0.72rem;
 }
 
-.game-catalog-grid.is-live-reorder .game-card-shell {
-  will-change: transform, opacity;
-  animation: catalog-live-reorder-pop 0.18s ease;
-}
-
 .game-card-shell {
+  position: relative;
+  isolation: isolate;
   border-radius: calc(var(--radius) + 0.15rem);
   overflow: hidden;
-  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.2s ease, filter 0.2s ease;
+  transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.16s ease, filter 0.16s ease;
+}
+
+.game-catalog-grid.is-live-reorder .game-card-shell {
+  will-change: transform;
 }
 
 .game-card-shell[draggable="true"] {
@@ -698,13 +699,33 @@ body {
 }
 
 .game-card-shell.is-drop-target {
-  transform: translateY(-3px) scale(1.01);
-  filter: saturate(1.08);
+  transform: translateY(-2px) scale(1.006);
+  filter: saturate(1.03);
 }
 
 .game-card-shell.is-drop-target .game-card {
   border-color: hsl(var(--ring));
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.36);
+}
+
+.game-card-shell.is-drop-target::after {
+  content: "";
+  position: absolute;
+  left: 0.55rem;
+  right: 0.55rem;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--ring) / 0.32), hsl(var(--ring)), hsl(var(--ring) / 0.32));
+  box-shadow: 0 0 0 1px hsl(var(--background) / 0.55), 0 0 0 6px hsl(var(--ring) / 0.08);
+  pointer-events: none;
+}
+
+.game-card-shell.is-drop-target.is-drop-before::after {
+  top: 0.42rem;
+}
+
+.game-card-shell.is-drop-target.is-drop-after::after {
+  bottom: 0.42rem;
 }
 
 .game-card {
@@ -756,10 +777,18 @@ body {
   display: block;
   transform: scale(1.04);
   transition: transform 0.25s ease;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
 }
 
 .game-card:hover .game-card-media img {
   transform: scale(1.1);
+}
+
+.game-catalog-grid.is-dragging .game-card-media img,
+.game-catalog-grid.is-dragging .game-card:hover .game-card-media img {
+  transform: scale(1.04);
+  transition: transform 0.12s linear;
 }
 
 .game-card-fallback {
@@ -803,15 +832,6 @@ body {
   font-size: 0.74rem;
   letter-spacing: 0.01em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-}
-
-@keyframes catalog-live-reorder-pop {
-  from {
-    transform: scale(0.99);
-  }
-  to {
-    transform: scale(1);
-  }
 }
 
 .editor-actions {
