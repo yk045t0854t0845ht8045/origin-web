@@ -187,7 +187,7 @@ const INITIAL_FORM: FormState = {
   downloadUrls: "",
   sizeBytes: "",
   sizeLabel: "",
-  currentPrice: "Gratuito",
+  currentPrice: "Grátis",
   originalPrice: "",
   discountPercent: "0%",
   sortOrder: "100",
@@ -554,7 +554,7 @@ function normalizeImportedFormPayload(
     pickFirstJsonValue(source, downloadListKeys) ??
     pickFirstJsonValue(source, downloadSingleKeys);
   const downloadUrlsText = readImportListText(rawDownloadUrls);
-  const normalizedDownloadUrls = uniqueList(parseListText(downloadUrlsText).map(normalizeUrlInput)).join("\n");
+  const normalizedDownloadUrls = uniqueList(parseListText(downloadUrlsText).map(normalizeDownloadUrlInput)).join("\n");
 
   return {
     ...currentForm,
@@ -711,7 +711,7 @@ function sanitizeFormForSnapshot(form: FormState): FormState {
     steamUrl: normalizeUrlInput(form.steamUrl),
     genres: uniqueList(parseListText(form.genres)).join("\n"),
     gallery: uniqueList(parseListText(form.gallery).map(normalizeGalleryMediaUrl)).join("\n"),
-    downloadUrls: uniqueList(parseListText(form.downloadUrls).map(normalizeUrlInput)).join("\n"),
+    downloadUrls: uniqueList(parseListText(form.downloadUrls).map(normalizeDownloadUrlInput)).join("\n"),
     sizeBytes: String(form.sizeBytes || "").trim(),
     sizeLabel: String(form.sizeLabel || "").trim(),
     currentPrice: String(form.currentPrice || "").trim(),
@@ -862,6 +862,41 @@ function buildDropboxDirectDownloadUrl(value: string): string {
   return parsed.toString();
 }
 
+function resolveDownloadUrlInput(value: string): { url: string; driveFileId: string } {
+  const normalizedInput = normalizeUrlInput(value);
+  if (!normalizedInput) {
+    return { url: "", driveFileId: "" };
+  }
+
+  const driveFileId = extractGoogleDriveFileIdFromInput(normalizedInput);
+  if (driveFileId) {
+    return {
+      url: buildGoogleDriveDirectDownloadUrl(driveFileId) || normalizedInput,
+      driveFileId
+    };
+  }
+
+  const parsed = parseHttpUrlInput(normalizedInput);
+  if (!parsed) {
+    return { url: "", driveFileId: "" };
+  }
+
+  const normalizedHttpUrl = parsed.toString();
+  const dropboxDirectLink = buildDropboxDirectDownloadUrl(normalizedHttpUrl);
+  return {
+    url: dropboxDirectLink || normalizedHttpUrl,
+    driveFileId: ""
+  };
+}
+
+function normalizeDownloadUrlInput(value: string): string {
+  const resolved = resolveDownloadUrlInput(value);
+  if (resolved.url) {
+    return resolved.url;
+  }
+  return normalizeUrlInput(value);
+}
+
 function extractSteamAppIdFromInput(value: string): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -1002,10 +1037,10 @@ function gameToForm(game: LauncherGame): FormState {
     steamUrl: game.steam_app_id > 0 ? `https://store.steampowered.com/app/${game.steam_app_id}` : "",
     genres: toListText(game.genres),
     gallery: toListText(game.gallery),
-    downloadUrls: toListText(game.download_urls),
+    downloadUrls: toListText((Array.isArray(game.download_urls) ? game.download_urls : []).map(normalizeDownloadUrlInput)),
     sizeBytes: game.size_bytes || "",
     sizeLabel: game.size_label || "",
-    currentPrice: game.current_price || "Gratuito",
+    currentPrice: game.current_price || "Grátis",
     originalPrice: game.original_price || "",
     discountPercent: game.discount_percent || "0%",
     sortOrder: String(game.sort_order || 100),
@@ -1170,7 +1205,7 @@ export function AdminAppClient() {
   const genreItems = useMemo(() => uniqueList(parseListText(form.genres)), [form.genres]);
   const galleryItems = useMemo(() => uniqueList(parseListText(form.gallery)), [form.gallery]);
   const downloadUrlItems = useMemo(
-    () => uniqueList(parseListText(form.downloadUrls).map(normalizeUrlInput)),
+    () => uniqueList(parseListText(form.downloadUrls).map(normalizeDownloadUrlInput)),
     [form.downloadUrls]
   );
   const archiveDescriptor = useMemo(
@@ -1312,15 +1347,15 @@ export function AdminAppClient() {
     [admins, editingStaffId]
   );
   const primaryDownloadLink = useMemo(() => {
-    const fromLinked = normalizeUrlInput(linkedDriveUrl);
+    const fromLinked = normalizeDownloadUrlInput(linkedDriveUrl);
     if (fromLinked) {
       return fromLinked;
     }
-    const fromEditing = normalizeUrlInput(editingGame?.download_url || editingGame?.download_urls?.[0] || "");
+    const fromEditing = normalizeDownloadUrlInput(editingGame?.download_url || editingGame?.download_urls?.[0] || "");
     if (fromEditing) {
       return fromEditing;
     }
-    const fromForm = normalizeUrlInput(parseListText(form.downloadUrls)[0] || "");
+    const fromForm = normalizeDownloadUrlInput(parseListText(form.downloadUrls)[0] || "");
     return fromForm;
   }, [linkedDriveUrl, editingGame?.download_url, editingGame?.download_urls, form.downloadUrls]);
   const extractedStaffSteamId = useMemo(() => extractSteamIdFromStaffInput(staffSteamId), [staffSteamId]);
@@ -1473,7 +1508,7 @@ export function AdminAppClient() {
     setForm((prev) => ({
       ...prev,
       free: true,
-      currentPrice: "Gratuito",
+      currentPrice: "Grátis",
       originalPrice: prev.originalPrice.trim() || "R$ 0,00",
       discountPercent: "100%"
     }));
@@ -1505,7 +1540,7 @@ export function AdminAppClient() {
         return normalizeUrlInput(prev.steamUrl);
       })(),
       gallery: uniqueList(parseListText(prev.gallery).map(normalizeGalleryMediaUrl)).join("\n"),
-      downloadUrls: uniqueList(parseListText(prev.downloadUrls).map(normalizeUrlInput)).join("\n")
+      downloadUrls: uniqueList(parseListText(prev.downloadUrls).map(normalizeDownloadUrlInput)).join("\n")
     }));
     setNoticeState("URLs normalizadas com sucesso.", false);
   }
@@ -2603,16 +2638,13 @@ export function AdminAppClient() {
       return;
     }
 
-    const driveFileId = extractGoogleDriveFileIdFromInput(normalizedLink);
-    const dropboxDirectLink = buildDropboxDirectDownloadUrl(normalizedLink);
-    const normalizedHttpUrl = parseHttpUrlInput(normalizedLink)?.toString() || "";
-    const directDownloadLink = driveFileId
-      ? buildGoogleDriveDirectDownloadUrl(driveFileId) || normalizedLink
-      : dropboxDirectLink || normalizedHttpUrl;
-    if (!directDownloadLink) {
+    const resolvedDownload = resolveDownloadUrlInput(normalizedLink);
+    const directDownloadLink = resolvedDownload.url;
+    if (!directDownloadLink || !parseHttpUrlInput(directDownloadLink)) {
       setNoticeState("Link invalido. Use uma URL http/https de arquivo (Drive/Dropbox).", true);
       return;
     }
+    const driveFileId = resolvedDownload.driveFileId;
 
     setArchiveFile(null);
     setLinkedDriveFileId(driveFileId);
@@ -2622,7 +2654,7 @@ export function AdminAppClient() {
     archiveDragDepthRef.current = 0;
     const mergedDownloadUrls = uniqueList([
       directDownloadLink,
-      ...parseListText(form.downloadUrls).map(normalizeUrlInput)
+      ...parseListText(form.downloadUrls).map(normalizeDownloadUrlInput)
     ]);
     updateField("downloadUrls", mergedDownloadUrls.join("\n"));
     const providerLabel = driveFileId ? "Google Drive" : isDropboxLink(normalizedLink) ? "Dropbox" : "fonte remota";
@@ -2659,20 +2691,16 @@ export function AdminAppClient() {
       return null;
     }
 
-    const driveFileId = extractGoogleDriveFileIdFromInput(normalizedInput);
-    const dropboxDirectLink = buildDropboxDirectDownloadUrl(normalizedInput);
-    const normalizedHttpUrl = parseHttpUrlInput(normalizedInput)?.toString() || "";
-    const url = driveFileId
-      ? buildGoogleDriveDirectDownloadUrl(driveFileId) || normalizedInput
-      : dropboxDirectLink || normalizedHttpUrl;
+    const resolvedDownload = resolveDownloadUrlInput(normalizedInput);
+    const url = resolvedDownload.url;
 
-    if (!url) {
+    if (!url || !parseHttpUrlInput(url)) {
       setNoticeState("Link invalido. Use uma URL http/https de arquivo.", true);
       return null;
     }
     return {
       url,
-      driveFileId
+      driveFileId: resolvedDownload.driveFileId
     };
   }
 
@@ -2692,11 +2720,11 @@ export function AdminAppClient() {
     }
 
     const currentDownloadUrls = uniqueList([
-      ...parseListText(form.downloadUrls).map(normalizeUrlInput),
+      ...parseListText(form.downloadUrls).map(normalizeDownloadUrlInput),
       ...(Array.isArray(editingGame?.download_urls) ? editingGame.download_urls : []).map((entry) =>
-        normalizeUrlInput(String(entry || ""))
+        normalizeDownloadUrlInput(String(entry || ""))
       ),
-      normalizeUrlInput(editingGame?.download_url || "")
+      normalizeDownloadUrlInput(editingGame?.download_url || "")
     ]).filter(Boolean);
     const nextDownloadUrls = uniqueList([normalized.url, ...currentDownloadUrls.filter((entry) => entry !== normalized.url)]);
     if (nextDownloadUrls.length === 0) {
@@ -3456,12 +3484,7 @@ export function AdminAppClient() {
               <input
                 onChange={(event) => setDriveLinkStageInput(event.target.value)}
                 onBlur={() => {
-                  const normalizedLink = normalizeUrlInput(driveLinkStageInput);
-                  if (!normalizedLink) return;
-                  const fileId = extractGoogleDriveFileIdFromInput(normalizedLink);
-                  const converted = fileId
-                    ? buildGoogleDriveDirectDownloadUrl(fileId)
-                    : buildDropboxDirectDownloadUrl(normalizedLink);
+                  const converted = resolveDownloadUrlInput(driveLinkStageInput).url;
                   if (converted) setDriveLinkStageInput(converted);
                 }}
                 onKeyDown={(event) => {
@@ -3862,6 +3885,12 @@ export function AdminAppClient() {
                   <span>download_urls</span>
                   <textarea
                     onChange={(event) => updateField("downloadUrls", event.target.value)}
+                    onBlur={() =>
+                      updateField(
+                        "downloadUrls",
+                        uniqueList(parseListText(form.downloadUrls).map(normalizeDownloadUrlInput)).join("\n")
+                      )
+                    }
                     placeholder="Uma URL por linha"
                     rows={2}
                     value={form.downloadUrls}
@@ -4017,6 +4046,12 @@ export function AdminAppClient() {
               <input
                 autoFocus
                 onChange={(event) => setPrimaryDownloadDraft(event.target.value)}
+                onBlur={() => {
+                  const converted = resolveDownloadUrlInput(primaryDownloadDraft).url;
+                  if (converted && converted !== primaryDownloadDraft) {
+                    setPrimaryDownloadDraft(converted);
+                  }
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
