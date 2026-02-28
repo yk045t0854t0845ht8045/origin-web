@@ -245,6 +245,120 @@ function normalizeUrlInput(value: string): string {
   return raw;
 }
 
+const MONTH_TOKEN_TO_NUMBER: Record<string, number> = {
+  jan: 1,
+  january: 1,
+  janeiro: 1,
+  feb: 2,
+  february: 2,
+  fev: 2,
+  fevereiro: 2,
+  mar: 3,
+  march: 3,
+  marco: 3,
+  abril: 4,
+  apr: 4,
+  april: 4,
+  abr: 4,
+  may: 5,
+  maio: 5,
+  jun: 6,
+  june: 6,
+  junho: 6,
+  jul: 7,
+  july: 7,
+  julho: 7,
+  aug: 8,
+  august: 8,
+  ago: 8,
+  agosto: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  set: 9,
+  setembro: 9,
+  oct: 10,
+  october: 10,
+  out: 10,
+  outubro: 10,
+  nov: 11,
+  november: 11,
+  novembro: 11,
+  dec: 12,
+  december: 12,
+  dez: 12,
+  dezembro: 12
+};
+
+function normalizeMonthToken(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z]/g, "");
+}
+
+function toIsoDateString(year: number, month: number, day: number): string {
+  const safeYear = Math.trunc(Number(year));
+  const safeMonth = Math.trunc(Number(month));
+  const safeDay = Math.trunc(Number(day));
+  if (!Number.isFinite(safeYear) || !Number.isFinite(safeMonth) || !Number.isFinite(safeDay)) {
+    return "";
+  }
+  if (safeYear < 1900 || safeYear > 2100 || safeMonth < 1 || safeMonth > 12 || safeDay < 1 || safeDay > 31) {
+    return "";
+  }
+  const date = new Date(Date.UTC(safeYear, safeMonth - 1, safeDay));
+  if (
+    date.getUTCFullYear() !== safeYear ||
+    date.getUTCMonth() + 1 !== safeMonth ||
+    date.getUTCDate() !== safeDay
+  ) {
+    return "";
+  }
+  const y = String(safeYear).padStart(4, "0");
+  const m = String(safeMonth).padStart(2, "0");
+  const d = String(safeDay).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function normalizeReleaseDateInput(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const yyyyMmDdMatch = raw.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  if (yyyyMmDdMatch) {
+    return toIsoDateString(Number(yyyyMmDdMatch[1]), Number(yyyyMmDdMatch[2]), Number(yyyyMmDdMatch[3]));
+  }
+
+  const ddMmYyyyMatch = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (ddMmYyyyMatch) {
+    return toIsoDateString(Number(ddMmYyyyMatch[3]), Number(ddMmYyyyMatch[2]), Number(ddMmYyyyMatch[1]));
+  }
+
+  const ddMonthYyyyMatch = raw.match(/^(\d{1,2})\s*(?:de\s+)?([a-zA-Z\u00C0-\u017F.]+)\s*(?:de\s+)?(\d{4})$/i);
+  if (ddMonthYyyyMatch) {
+    const month = MONTH_TOKEN_TO_NUMBER[normalizeMonthToken(ddMonthYyyyMatch[2])] || 0;
+    return toIsoDateString(Number(ddMonthYyyyMatch[3]), month, Number(ddMonthYyyyMatch[1]));
+  }
+
+  const monthDdYyyyMatch = raw.match(/^([a-zA-Z\u00C0-\u017F.]+)\s+(\d{1,2})(?:,)?\s+(\d{4})$/i);
+  if (monthDdYyyyMatch) {
+    const month = MONTH_TOKEN_TO_NUMBER[normalizeMonthToken(monthDdYyyyMatch[1])] || 0;
+    return toIsoDateString(Number(monthDdYyyyMatch[3]), month, Number(monthDdYyyyMatch[2]));
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isFinite(parsed.getTime())) {
+    return toIsoDateString(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+  }
+
+  return "";
+}
+
 function normalizeMediaPathInput(value: string): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -490,7 +604,14 @@ function normalizeImportedFormPayload(
     ),
     developedBy: readImportText(pickFirstJsonValue(source, ["developedBy", "developed_by"]), currentForm.developedBy),
     publishedBy: readImportText(pickFirstJsonValue(source, ["publishedBy", "published_by"]), currentForm.publishedBy),
-    releaseDate: readImportText(pickFirstJsonValue(source, ["releaseDate", "release_date"]), currentForm.releaseDate),
+    releaseDate: (() => {
+      const importedReleaseDate = readImportText(
+        pickFirstJsonValue(source, ["releaseDate", "release_date"]),
+        currentForm.releaseDate
+      );
+      const normalizedReleaseDate = normalizeReleaseDateInput(importedReleaseDate);
+      return normalizedReleaseDate || importedReleaseDate;
+    })(),
     steamAppId: normalizedSteamAppId,
     steamUrl: normalizedSteamUrl,
     genres: hasAnyJsonKey(source, genreKeys) ? readImportListText(rawGenres) : currentForm.genres,
@@ -585,7 +706,7 @@ function sanitizeFormForSnapshot(form: FormState): FormState {
     trailerUrl: normalizeMediaUrlForField("trailerUrl", form.trailerUrl),
     developedBy: String(form.developedBy || "").trim(),
     publishedBy: String(form.publishedBy || "").trim(),
-    releaseDate: String(form.releaseDate || "").trim(),
+    releaseDate: normalizeReleaseDateInput(String(form.releaseDate || "")) || String(form.releaseDate || "").trim(),
     steamAppId: String(form.steamAppId || "").trim(),
     steamUrl: normalizeUrlInput(form.steamUrl),
     genres: uniqueList(parseListText(form.genres)).join("\n"),
@@ -1095,7 +1216,11 @@ export function AdminAppClient() {
   );
 
   const isReleaseDateValid = useMemo(
-    () => !form.releaseDate.trim() || /^\d{4}-\d{2}-\d{2}$/.test(form.releaseDate.trim()),
+    () => {
+      const raw = String(form.releaseDate || "").trim();
+      if (!raw) return true;
+      return Boolean(normalizeReleaseDateInput(raw));
+    },
     [form.releaseDate]
   );
 
@@ -1383,6 +1508,27 @@ export function AdminAppClient() {
       downloadUrls: uniqueList(parseListText(prev.downloadUrls).map(normalizeUrlInput)).join("\n")
     }));
     setNoticeState("URLs normalizadas com sucesso.", false);
+  }
+
+  function normalizeReleaseDateField(notify = false) {
+    const rawReleaseDate = String(form.releaseDate || "").trim();
+    if (!rawReleaseDate) {
+      return true;
+    }
+    const normalizedReleaseDate = normalizeReleaseDateInput(rawReleaseDate);
+    if (!normalizedReleaseDate) {
+      if (notify) {
+        setNoticeState("Nao foi possivel interpretar a release_date. Use uma data valida.", true);
+      }
+      return false;
+    }
+    if (normalizedReleaseDate !== rawReleaseDate) {
+      updateField("releaseDate", normalizedReleaseDate);
+      if (notify) {
+        setNoticeState(`release_date ajustada para ${normalizedReleaseDate}.`, false);
+      }
+    }
+    return true;
   }
 
   async function copyEditorJsonToClipboard() {
@@ -2629,6 +2775,7 @@ export function AdminAppClient() {
     const steamIdFromUrl = extractSteamAppIdFromInput(steamUrlValue);
     const steamIdValue = steamIdFromUrl || form.steamAppId.trim();
     const derivedSteamUrl = steamIdFromUrl ? buildSteamStoreUrl(steamIdFromUrl) : steamUrlValue;
+    const normalizedReleaseDate = normalizeReleaseDateInput(form.releaseDate);
 
     if (!canPublishGames) {
       setNoticeState("Acesso negado.", true);
@@ -2646,8 +2793,8 @@ export function AdminAppClient() {
       setNoticeState("Para novo jogo, envie o arquivo .rar/.zip ou cole um link de arquivo (Drive/Dropbox).", true);
       return;
     }
-    if (!isReleaseDateValid) {
-      setNoticeState("release_date invalida. Use o formato YYYY-MM-DD.", true);
+    if (form.releaseDate.trim() && !normalizedReleaseDate) {
+      setNoticeState("release_date invalida. Informe uma data valida para converter em YYYY-MM-DD.", true);
       return;
     }
     if (!isSteamIdValid) {
@@ -2657,6 +2804,12 @@ export function AdminAppClient() {
 
     setIsSaving(true);
     try {
+      if (normalizedReleaseDate && normalizedReleaseDate !== form.releaseDate.trim()) {
+        setForm((prev) => ({
+          ...prev,
+          releaseDate: normalizedReleaseDate
+        }));
+      }
       const payload = new FormData();
       payload.append("id", resolvedId);
       payload.append("name", form.name.trim());
@@ -2674,7 +2827,7 @@ export function AdminAppClient() {
       payload.append("trailerUrl", normalizeMediaUrlForField("trailerUrl", form.trailerUrl));
       payload.append("developedBy", form.developedBy.trim());
       payload.append("publishedBy", form.publishedBy.trim());
-      payload.append("releaseDate", form.releaseDate.trim());
+      payload.append("releaseDate", normalizedReleaseDate);
       payload.append("steamAppId", steamIdValue);
       payload.append("steamUrl", derivedSteamUrl);
       payload.append("genres", JSON.stringify(uniqueList(parseListText(form.genres))));
@@ -3567,10 +3720,15 @@ export function AdminAppClient() {
                       <input
                         className={!isReleaseDateValid ? "is-invalid" : undefined}
                         onChange={(event) => updateField("releaseDate", event.target.value)}
+                        onBlur={() => {
+                          void normalizeReleaseDateField(false);
+                        }}
                         placeholder="YYYY-MM-DD"
                         value={form.releaseDate}
                       />
-                      {!isReleaseDateValid ? <small className="input-hint is-error">Formato esperado: YYYY-MM-DD.</small> : null}
+                      {!isReleaseDateValid ? (
+                        <small className="input-hint is-error">Use uma data valida. Ex: 2025-02-26 ou 26 Feb 2025.</small>
+                      ) : null}
                     </label>
                     <label><span>size_bytes</span><input inputMode="numeric" onChange={(event) => updateField("sizeBytes", event.target.value)} value={form.sizeBytes} /></label>
                     <label><span>size_label</span><input onChange={(event) => updateField("sizeLabel", event.target.value)} placeholder="Ex: 18.6 GB" value={form.sizeLabel} /></label>
