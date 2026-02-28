@@ -2012,6 +2012,9 @@ function createServer() {
       }
 
       const existingGame = await fetchLauncherGameByIdFromSupabase(id);
+      const isStaffViewer = String(req.viewer?.role || "")
+        .trim()
+        .toLowerCase() === "staff";
       if (existingGame && !hasPermission(req.viewer, "editGame")) {
         res.status(403).json({
           error: "forbidden_permission",
@@ -2075,7 +2078,25 @@ function createServer() {
           : normalizedDriveLinkInput
             ? [normalizedDriveLinkInput]
             : normalizeJsonArrayField(existingGame?.download_urls);
-      if (!driveFileId && downloadUrls.length === 0) {
+      const hasValidDownloadSource =
+        Boolean(driveFileId) ||
+        downloadUrls.some((entry) => {
+          const normalized = normalizeRemoteDownloadUrl(entry);
+          return Boolean(normalized) && !isGoogleDriveFolderLink(normalized) && !isDropboxFolderLink(normalized);
+        });
+      const requestedComingSoon = parseBooleanInput(
+        req.body?.comingSoon || req.body?.coming_soon,
+        parseBooleanInput(existingGame?.coming_soon, false)
+      );
+      const resolvedComingSoon = !existingGame && !hasValidDownloadSource ? true : requestedComingSoon;
+      if (isStaffViewer && !resolvedComingSoon && !hasValidDownloadSource) {
+        res.status(400).json({
+          error: "staff_requires_valid_download",
+          message: "Staff nao pode desativar coming_soon sem uma fonte de download valida."
+        });
+        return;
+      }
+      if (!resolvedComingSoon && !hasValidDownloadSource) {
         res.status(400).json({
           error: "missing_download_source",
           message: hasGoogleDriveFolderLinkInput
@@ -2183,10 +2204,7 @@ function createServer() {
         ),
         free: parseBooleanInput(req.body?.free, parseBooleanInput(existingGame?.free, false)),
         exclusive: parseBooleanInput(req.body?.exclusive, parseBooleanInput(existingGame?.exclusive, false)),
-        coming_soon: parseBooleanInput(
-          req.body?.comingSoon || req.body?.coming_soon,
-          parseBooleanInput(existingGame?.coming_soon, false)
-        ),
+        coming_soon: resolvedComingSoon,
         enabled: parseBooleanInput(req.body?.enabled, parseBooleanInput(existingGame?.enabled, true)),
         sort_order: parseIntegerInput(req.body?.sortOrder || req.body?.sort_order, parseIntegerInput(existingGame?.sort_order, 100))
       };

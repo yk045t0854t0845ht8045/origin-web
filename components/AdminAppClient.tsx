@@ -1151,6 +1151,7 @@ export function AdminAppClient() {
   const [driveLinkStageInput, setDriveLinkStageInput] = useState("");
   const [linkedDriveFileId, setLinkedDriveFileId] = useState("");
   const [linkedDriveUrl, setLinkedDriveUrl] = useState("");
+  const [allowMetadataWithoutDownloadSource, setAllowMetadataWithoutDownloadSource] = useState(false);
   const [isArchiveDragActive, setIsArchiveDragActive] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingPrimaryDownload, setIsSavingPrimaryDownload] = useState(false);
@@ -1208,6 +1209,27 @@ export function AdminAppClient() {
     () => uniqueList(parseListText(form.downloadUrls).map(normalizeDownloadUrlInput)),
     [form.downloadUrls]
   );
+  const hasPersistedDownloadSource = useMemo(
+    () =>
+      Boolean(
+        String(editingGame?.google_drive_file_id || "").trim() ||
+          normalizeDownloadUrlInput(String(editingGame?.download_url || "")) ||
+          (Array.isArray(editingGame?.download_urls) &&
+            editingGame.download_urls.some((entry) => Boolean(normalizeDownloadUrlInput(String(entry || "")))))
+      ),
+    [editingGame?.google_drive_file_id, editingGame?.download_url, editingGame?.download_urls]
+  );
+  const hasAnyDownloadSource = useMemo(
+    () =>
+      Boolean(
+        archiveFile ||
+          linkedDriveFileId ||
+          normalizeDownloadUrlInput(linkedDriveUrl) ||
+          downloadUrlItems.length > 0 ||
+          (editorMode === "edit" && hasPersistedDownloadSource)
+      ),
+    [archiveFile, linkedDriveFileId, linkedDriveUrl, downloadUrlItems.length, editorMode, hasPersistedDownloadSource]
+  );
   const archiveDescriptor = useMemo(
     () => {
       if (archiveFile) return `${archiveFile.name}:${archiveFile.size}`;
@@ -1222,8 +1244,13 @@ export function AdminAppClient() {
     [form, editorMode, editingGameId, archiveDescriptor]
   );
   const showUploadOnlyStage = useMemo(
-    () => view === "editor" && editorMode === "new" && !archiveFile && !linkedDriveUrl,
-    [view, editorMode, archiveFile, linkedDriveUrl]
+    () =>
+      view === "editor" &&
+      editorMode === "new" &&
+      !allowMetadataWithoutDownloadSource &&
+      !archiveFile &&
+      !linkedDriveUrl,
+    [view, editorMode, allowMetadataWithoutDownloadSource, archiveFile, linkedDriveUrl]
   );
   const isDirty = useMemo(
     () => view === "editor" && currentSnapshot !== baseSnapshot,
@@ -1276,7 +1303,8 @@ export function AdminAppClient() {
             linkedDriveFileId ||
             editingGame?.google_drive_file_id ||
             editingGame?.download_url ||
-            editingGame?.download_urls?.[0]
+            editingGame?.download_urls?.[0] ||
+            form.comingSoon
         )
       },
       { label: "Capa configurada", ok: Boolean(cardPreviewUrl) },
@@ -1297,7 +1325,8 @@ export function AdminAppClient() {
       galleryItems.length,
       downloadUrlItems.length,
       isSteamIdValid,
-      form.steamAppId
+      form.steamAppId,
+      form.comingSoon
     ]
   );
 
@@ -1336,6 +1365,7 @@ export function AdminAppClient() {
   const canEditGames = Boolean(viewerPermissions.editGame);
   const canRemoveGames = Boolean(viewerPermissions.removeGame);
   const canManageMaintenance = Boolean(viewerPermissions.manageMaintenance);
+  const isStaffViewer = viewerRole === "staff";
   const isCatalogReorderEnabled = canEditGames && search.trim().length === 0 && !gamesLoading && !isSavingCatalogOrder;
   const catalogDragActive = Boolean(draggedCatalogGameId);
   const draggedCatalogGame = useMemo(
@@ -1451,12 +1481,17 @@ export function AdminAppClient() {
       steamAppId: resolvedSteamId,
       steamUrl: resolvedSteamId ? buildSteamStoreUrl(resolvedSteamId) : draftSteamUrl
     };
+    const restoredLinkedDriveFileId = String(draft.linkedDriveFileId || "").trim();
+    const restoredLinkedDriveUrl = normalizeUrlInput(String(draft.linkedDriveUrl || ""));
+    const restoredDownloadUrls = uniqueList(parseListText(fixedDraftForm.downloadUrls).map(normalizeDownloadUrlInput));
+    const restoredHasSource = Boolean(restoredLinkedDriveFileId || restoredLinkedDriveUrl || restoredDownloadUrls.length > 0);
     setForm(fixedDraftForm);
     setGenreInput(String(draft.genreInput || ""));
     setGalleryInput(String(draft.galleryInput || ""));
-    setLinkedDriveFileId(String(draft.linkedDriveFileId || "").trim());
-    setLinkedDriveUrl(normalizeUrlInput(String(draft.linkedDriveUrl || "")));
-    setDriveLinkStageInput(normalizeUrlInput(String(draft.linkedDriveUrl || "")));
+    setLinkedDriveFileId(restoredLinkedDriveFileId);
+    setLinkedDriveUrl(restoredLinkedDriveUrl);
+    setDriveLinkStageInput(restoredLinkedDriveUrl);
+    setAllowMetadataWithoutDownloadSource(!restoredHasSource && Boolean(fixedDraftForm.comingSoon));
     setBaseSnapshot(createFormSnapshot(fixedDraftForm, { mode: "new", archiveKey: "" }));
     setDraftUpdatedAt(String(draft.updatedAt || ""));
     setNoticeState("Rascunho restaurado.", false);
@@ -2064,6 +2099,7 @@ export function AdminAppClient() {
     setDriveLinkStageInput("");
     setLinkedDriveFileId("");
     setLinkedDriveUrl("");
+    setAllowMetadataWithoutDownloadSource(false);
     setIsArchiveDragActive(false);
     archiveDragDepthRef.current = 0;
     setEditingGameId("");
@@ -2526,6 +2562,7 @@ export function AdminAppClient() {
     setView("editor");
     setDashboardSection("jogos");
     setEditorMode("new");
+    setAllowMetadataWithoutDownloadSource(false);
     setIsArchiveDragActive(false);
     archiveDragDepthRef.current = 0;
     if (editorLayoutMode === "simplified") setShowAdvancedInSimplified(true);
@@ -2547,6 +2584,7 @@ export function AdminAppClient() {
     setDriveLinkStageInput("");
     setLinkedDriveFileId("");
     setLinkedDriveUrl("");
+    setAllowMetadataWithoutDownloadSource(false);
     setIsArchiveDragActive(false);
     archiveDragDepthRef.current = 0;
     setGenreInput("");
@@ -2571,6 +2609,7 @@ export function AdminAppClient() {
     }
 
     setArchiveFile(file);
+    setAllowMetadataWithoutDownloadSource(false);
     setLinkedDriveFileId("");
     setLinkedDriveUrl("");
     updateField("archiveType", file.name.toLowerCase().endsWith(".zip") ? "zip" : "rar");
@@ -2647,6 +2686,7 @@ export function AdminAppClient() {
     const driveFileId = resolvedDownload.driveFileId;
 
     setArchiveFile(null);
+    setAllowMetadataWithoutDownloadSource(false);
     setLinkedDriveFileId(driveFileId);
     setLinkedDriveUrl(directDownloadLink);
     setDriveLinkStageInput(directDownloadLink);
@@ -2659,6 +2699,28 @@ export function AdminAppClient() {
     updateField("downloadUrls", mergedDownloadUrls.join("\n"));
     const providerLabel = driveFileId ? "Google Drive" : isDropboxLink(normalizedLink) ? "Dropbox" : "fonte remota";
     setNoticeState(`Link de ${providerLabel} aplicado. Agora finalize os metadados e publique.`, false);
+  }
+
+  function continueWithoutDownloadSource() {
+    setAllowMetadataWithoutDownloadSource(true);
+    setForm((prev) => ({
+      ...prev,
+      comingSoon: true
+    }));
+    setNoticeState("Modo Coming Soon ativado. Voce pode salvar sem link agora e publicar o download depois.", false);
+  }
+
+  function onComingSoonToggle(nextValue: boolean) {
+    if (nextValue) {
+      updateField("comingSoon", true);
+      return;
+    }
+    if (isStaffViewer && !hasAnyDownloadSource) {
+      updateField("comingSoon", true);
+      setNoticeState("Staff nao pode desativar coming_soon sem um link de download valido.", true);
+      return;
+    }
+    updateField("comingSoon", false);
   }
 
   function openPrimaryDownloadModal() {
@@ -2817,16 +2879,18 @@ export function AdminAppClient() {
       setNoticeState("Preencha nome/ID do jogo.", true);
       return;
     }
-    if (editorMode === "new" && !archiveFile && !linkedDriveUrl) {
-      setNoticeState("Para novo jogo, envie o arquivo .rar/.zip ou cole um link de arquivo (Drive/Dropbox).", true);
-      return;
-    }
     if (form.releaseDate.trim() && !normalizedReleaseDate) {
       setNoticeState("release_date invalida. Informe uma data valida para converter em YYYY-MM-DD.", true);
       return;
     }
     if (!isSteamIdValid) {
       setNoticeState("Steam URL invalida. Use um link no formato /app/ID.", true);
+      return;
+    }
+    const shouldForceComingSoon = editorMode === "new" && !hasAnyDownloadSource;
+    const finalComingSoon = shouldForceComingSoon ? true : Boolean(form.comingSoon);
+    if (isStaffViewer && !finalComingSoon && !hasAnyDownloadSource) {
+      setNoticeState("Staff nao pode tirar coming_soon sem uma fonte de download valida.", true);
       return;
     }
 
@@ -2836,6 +2900,12 @@ export function AdminAppClient() {
         setForm((prev) => ({
           ...prev,
           releaseDate: normalizedReleaseDate
+        }));
+      }
+      if (finalComingSoon !== form.comingSoon) {
+        setForm((prev) => ({
+          ...prev,
+          comingSoon: finalComingSoon
         }));
       }
       const payload = new FormData();
@@ -2869,7 +2939,7 @@ export function AdminAppClient() {
       payload.append("sortOrder", form.sortOrder.trim());
       payload.append("free", String(form.free));
       payload.append("exclusive", String(form.exclusive));
-      payload.append("comingSoon", String(form.comingSoon));
+      payload.append("comingSoon", String(finalComingSoon));
       payload.append("enabled", String(form.enabled));
       if (linkedDriveFileId) payload.append("driveFileId", linkedDriveFileId);
       if (linkedDriveUrl) payload.append("driveLink", linkedDriveUrl);
@@ -3501,6 +3571,9 @@ export function AdminAppClient() {
               <button className="button button-primary" onClick={continueWithRemoteLink} type="button">
                 Continuar com link
               </button>
+              <button className="button button-ghost" onClick={continueWithoutDownloadSource} type="button">
+                Continuar sem link (Coming Soon)
+              </button>
               {draftUpdatedAt ? (
                 <button className="button button-ghost" onClick={restoreEditorDraft} type="button">
                   Restaurar rascunho
@@ -3901,7 +3974,7 @@ export function AdminAppClient() {
               <div className="checkbox-grid">
                 <label className="checkbox-item"><input checked={form.free} onChange={(event) => updateField("free", event.target.checked)} type="checkbox" /><span>free</span></label>
                 <label className="checkbox-item"><input checked={form.exclusive} onChange={(event) => updateField("exclusive", event.target.checked)} type="checkbox" /><span>exclusive</span></label>
-                <label className="checkbox-item"><input checked={form.comingSoon} onChange={(event) => updateField("comingSoon", event.target.checked)} type="checkbox" /><span>coming_soon</span></label>
+                <label className="checkbox-item"><input checked={form.comingSoon} onChange={(event) => onComingSoonToggle(event.target.checked)} type="checkbox" /><span>coming_soon</span></label>
                 <label className="checkbox-item"><input checked={form.enabled} onChange={(event) => updateField("enabled", event.target.checked)} type="checkbox" /><span>enabled</span></label>
               </div>
 
