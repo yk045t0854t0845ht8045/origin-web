@@ -949,6 +949,74 @@ body {
   font-size: 0.77rem;
 }
 
+.primary-download-field {
+  margin-bottom: 0.62rem;
+}
+
+.primary-download-input-wrap {
+  position: relative;
+}
+
+.primary-download-input-wrap input[readonly] {
+  padding-right: 2.5rem;
+  background: hsl(var(--background) / 0.72);
+  color: hsl(var(--foreground));
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.primary-download-input-wrap.is-editable:hover input[readonly],
+.primary-download-input-wrap.is-editable:focus-within input[readonly] {
+  border-color: hsl(var(--ring) / 0.72);
+  box-shadow: 0 0 0 1px hsl(var(--ring) / 0.24);
+}
+
+.primary-download-edit-button {
+  position: absolute;
+  top: 50%;
+  right: 0.38rem;
+  transform: translateY(-50%);
+  width: 1.7rem;
+  height: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.48rem;
+  background: hsl(var(--card) / 0.9);
+  color: hsl(var(--muted-foreground));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.primary-download-input-wrap.is-editable:hover .primary-download-edit-button,
+.primary-download-input-wrap.is-editable:focus-within .primary-download-edit-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.primary-download-edit-button:hover {
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--ring));
+  background: hsl(var(--accent) / 0.9);
+}
+
+.primary-download-edit-button svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.primary-download-modal-card {
+  width: min(560px, calc(100vw - 1.2rem));
+}
+
+@media (max-width: 720px) {
+  .primary-download-edit-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .smart-assistant {
   border: 1px solid hsl(var(--border));
   border-radius: calc(var(--radius) - 0.15rem);

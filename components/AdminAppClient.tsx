@@ -997,6 +997,7 @@ export function AdminAppClient() {
   const [linkedDriveUrl, setLinkedDriveUrl] = useState("");
   const [isArchiveDragActive, setIsArchiveDragActive] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingPrimaryDownload, setIsSavingPrimaryDownload] = useState(false);
   const [isRemovingGame, setIsRemovingGame] = useState(false);
   const [isManagingStaff, setIsManagingStaff] = useState(false);
   const [isUploadingGallery, setIsUploadingGallery] = useState(false);
@@ -1008,6 +1009,8 @@ export function AdminAppClient() {
   const [catalogDropTargetGameId, setCatalogDropTargetGameId] = useState("");
   const [catalogDropPlacement, setCatalogDropPlacement] = useState<"before" | "after">("after");
   const [isSavingCatalogOrder, setIsSavingCatalogOrder] = useState(false);
+  const [isPrimaryDownloadModalOpen, setIsPrimaryDownloadModalOpen] = useState(false);
+  const [primaryDownloadDraft, setPrimaryDownloadDraft] = useState("");
   const [draftUpdatedAt, setDraftUpdatedAt] = useState("");
   const [isJsonImportOpen, setIsJsonImportOpen] = useState(false);
   const [jsonImportInput, setJsonImportInput] = useState("");
@@ -1183,6 +1186,18 @@ export function AdminAppClient() {
     () => admins.find((entry) => entry.steamId === editingStaffId) || null,
     [admins, editingStaffId]
   );
+  const primaryDownloadLink = useMemo(() => {
+    const fromLinked = normalizeUrlInput(linkedDriveUrl);
+    if (fromLinked) {
+      return fromLinked;
+    }
+    const fromEditing = normalizeUrlInput(editingGame?.download_url || editingGame?.download_urls?.[0] || "");
+    if (fromEditing) {
+      return fromEditing;
+    }
+    const fromForm = normalizeUrlInput(parseListText(form.downloadUrls)[0] || "");
+    return fromForm;
+  }, [linkedDriveUrl, editingGame?.download_url, editingGame?.download_urls, form.downloadUrls]);
   const extractedStaffSteamId = useMemo(() => extractSteamIdFromStaffInput(staffSteamId), [staffSteamId]);
   const viewerDisplayName = String(viewer.user?.displayName || "Steam User").trim() || "Steam User";
   const viewerSteamId = String(viewer.user?.steamId || "").trim();
@@ -2468,6 +2483,145 @@ export function AdminAppClient() {
     setNoticeState(`Link de ${providerLabel} aplicado. Agora finalize os metadados e publique.`, false);
   }
 
+  function openPrimaryDownloadModal() {
+    if (!canEditGames || editorMode !== "edit" || !editingGameId) {
+      return;
+    }
+    setPrimaryDownloadDraft(primaryDownloadLink);
+    setIsPrimaryDownloadModalOpen(true);
+  }
+
+  function closePrimaryDownloadModal() {
+    if (isSavingPrimaryDownload) {
+      return;
+    }
+    setIsPrimaryDownloadModalOpen(false);
+  }
+
+  function normalizePrimaryDownloadLinkInput(rawValue: string): { url: string; driveFileId: string } | null {
+    const normalizedInput = normalizeUrlInput(rawValue);
+    if (!normalizedInput) {
+      setNoticeState("Informe um link de download principal valido.", true);
+      return null;
+    }
+    if (isGoogleDriveFolderLink(normalizedInput)) {
+      setNoticeState("Link de pasta do Google Drive detectado. Use o link direto do arquivo.", true);
+      return null;
+    }
+    if (isDropboxFolderLink(normalizedInput)) {
+      setNoticeState("Link de pasta do Dropbox detectado. Use o link direto do arquivo.", true);
+      return null;
+    }
+
+    const driveFileId = extractGoogleDriveFileIdFromInput(normalizedInput);
+    const dropboxDirectLink = buildDropboxDirectDownloadUrl(normalizedInput);
+    const normalizedHttpUrl = parseHttpUrlInput(normalizedInput)?.toString() || "";
+    const url = driveFileId
+      ? buildGoogleDriveDirectDownloadUrl(driveFileId) || normalizedInput
+      : dropboxDirectLink || normalizedHttpUrl;
+
+    if (!url) {
+      setNoticeState("Link invalido. Use uma URL http/https de arquivo.", true);
+      return null;
+    }
+    return {
+      url,
+      driveFileId
+    };
+  }
+
+  async function savePrimaryDownloadLink() {
+    if (!canEditGames) {
+      setNoticeState("Seu cargo nao pode editar jogos.", true);
+      return;
+    }
+    if (editorMode !== "edit" || !editingGameId) {
+      setNoticeState("Abra um jogo existente para alterar o link principal.", true);
+      return;
+    }
+
+    const normalized = normalizePrimaryDownloadLinkInput(primaryDownloadDraft);
+    if (!normalized) {
+      return;
+    }
+
+    const currentDownloadUrls = uniqueList([
+      ...parseListText(form.downloadUrls).map(normalizeUrlInput),
+      ...(Array.isArray(editingGame?.download_urls) ? editingGame.download_urls : []).map((entry) =>
+        normalizeUrlInput(String(entry || ""))
+      ),
+      normalizeUrlInput(editingGame?.download_url || "")
+    ]).filter(Boolean);
+    const nextDownloadUrls = uniqueList([normalized.url, ...currentDownloadUrls.filter((entry) => entry !== normalized.url)]);
+    if (nextDownloadUrls.length === 0) {
+      setNoticeState("Nao foi possivel montar a lista de download.", true);
+      return;
+    }
+
+    setIsSavingPrimaryDownload(true);
+    try {
+      const payload = new FormData();
+      payload.append("id", editingGameId);
+      payload.append("name", String(form.name || editingGame?.name || editingGameId).trim() || editingGameId);
+      payload.append("downloadUrls", JSON.stringify(nextDownloadUrls));
+      payload.append("driveLink", normalized.url);
+      if (normalized.driveFileId) {
+        payload.append("driveFileId", normalized.driveFileId);
+      }
+
+      const response = await fetchApiWithTimeout(
+        "/api/publish-game",
+        {
+          method: "POST",
+          body: payload
+        },
+        45000
+      );
+      const json = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        game?: LauncherGame;
+        message?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || !json?.ok) {
+        throw new Error(json?.message || json?.error || `Falha ao atualizar link principal (${response.status}).`);
+      }
+
+      const savedGame = json?.game;
+      if (savedGame && savedGame.id) {
+        setGames((prev) => prev.map((game) => (game.id === savedGame.id ? savedGame : game)));
+      } else {
+        await loadGames();
+      }
+
+      const nextFormState: FormState = {
+        ...form,
+        downloadUrls: nextDownloadUrls.join("\n")
+      };
+      setForm(nextFormState);
+      if (!isDirty) {
+        setBaseSnapshot(
+          createFormSnapshot(nextFormState, {
+            mode: editorMode,
+            gameId: editingGameId,
+            archiveKey: archiveDescriptor
+          })
+        );
+      }
+      setPrimaryDownloadDraft(normalized.url);
+      setIsPrimaryDownloadModalOpen(false);
+      setNoticeState("Link principal atualizado com sucesso.", false);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNoticeState("Tempo excedido ao atualizar link principal. Tente novamente.", true);
+      } else {
+        setNoticeState(error instanceof Error ? error.message : "Falha ao atualizar link principal.", true);
+      }
+    } finally {
+      setIsSavingPrimaryDownload(false);
+    }
+  }
+
   async function saveGame(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNoticeState("", false);
@@ -3237,6 +3391,27 @@ export function AdminAppClient() {
                       : editingGame?.google_drive_file_id || editingGame?.download_url || editingGame?.download_urls?.[0] || "-"}
               </span>
             </div>
+            {editorMode === "edit" ? (
+              <label className="primary-download-field">
+                <span>Link principal de download</span>
+                <div className={`primary-download-input-wrap ${canEditGames ? "is-editable" : ""}`}>
+                  <input placeholder="Nenhum link principal definido." readOnly value={primaryDownloadLink} />
+                  {canEditGames ? (
+                    <button
+                      aria-label="Editar link principal"
+                      className="primary-download-edit-button"
+                      onClick={openPrimaryDownloadModal}
+                      type="button"
+                    >
+                      <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                        <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+                        <path d="m12 6 4 4" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+              </label>
+            ) : null}
             {linkedDriveUrl ? <p className="field-hint">Link remoto ativo: {compactText(linkedDriveUrl, 96)}</p> : null}
 
             <section className="smart-assistant">
@@ -3670,6 +3845,42 @@ export function AdminAppClient() {
           ) : null}
         </section>
       </div>
+
+      {isPrimaryDownloadModalOpen ? (
+        <aside className="confirm-overlay" onClick={closePrimaryDownloadModal} role="dialog">
+          <article className="card confirm-card primary-download-modal-card" onClick={(event) => event.stopPropagation()}>
+            <p className="kicker">LINK PRINCIPAL</p>
+            <h3>Editar download principal</h3>
+            <p className="text-muted">
+              Este link vira o principal do jogo no launcher e sera salvo imediatamente no banco.
+            </p>
+            <label>
+              <span>Novo link principal</span>
+              <input
+                autoFocus
+                onChange={(event) => setPrimaryDownloadDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void savePrimaryDownloadLink();
+                  }
+                }}
+                placeholder="https://www.dropbox.com/s/... ?dl=1"
+                value={primaryDownloadDraft}
+              />
+            </label>
+            <p className="field-hint">Dica: links de arquivo do Google Drive e Dropbox sao convertidos automaticamente.</p>
+            <div className="confirm-actions">
+              <button className="button button-ghost" disabled={isSavingPrimaryDownload} onClick={closePrimaryDownloadModal} type="button">
+                Cancelar
+              </button>
+              <button className="button button-primary" disabled={isSavingPrimaryDownload} onClick={() => void savePrimaryDownloadLink()} type="button">
+                {isSavingPrimaryDownload ? "Salvando..." : "Salvar link principal"}
+              </button>
+            </div>
+          </article>
+        </aside>
+      ) : null}
 
       {isMaintenanceModalOpen ? (
         <aside className="confirm-overlay" onClick={() => setIsMaintenanceModalOpen(false)} role="dialog">
