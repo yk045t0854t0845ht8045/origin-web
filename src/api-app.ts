@@ -907,9 +907,7 @@ function normalizeLauncherGameRow(row) {
     download_url: readText(row.download_url),
     download_urls: normalizeJsonArrayField(row.download_urls),
     download_sources: normalizeJsonArrayField(row.download_sources),
-    google_drive_file_id: readText(row.google_drive_file_id),
     local_archive_file: readText(row.local_archive_file),
-    google_api_key: readText(row.google_api_key),
     install_dir_name: readText(row.install_dir_name),
     launch_executable: readText(row.launch_executable),
     auto_detect_executable: parseBooleanInput(row.auto_detect_executable, true),
@@ -955,9 +953,7 @@ const LAUNCHER_GAMES_SELECT_COLUMNS = [
   "download_url",
   "download_urls",
   "download_sources",
-  "google_drive_file_id",
   "local_archive_file",
-  "google_api_key",
   "install_dir_name",
   "launch_executable",
   "auto_detect_executable",
@@ -1178,6 +1174,76 @@ async function deleteLauncherGameInSupabase(gameId) {
     return false;
   }
   return true;
+}
+
+async function updateLauncherGamesSortOrderInSupabase(updates = []) {
+  if (!config.supabaseUrl || !config.supabaseRestKey) {
+    throw new Error(
+      "Supabase nao configurado. Defina SUPABASE_URL e SUPABASE_ANON_KEY (ou SUPABASE_SERVICE_ROLE_KEY)."
+    );
+  }
+
+  const dedupedById = new Map();
+  for (const entry of Array.isArray(updates) ? updates : []) {
+    const normalizedId = slugify(entry?.id);
+    if (!normalizedId) {
+      continue;
+    }
+    const sortOrder = Math.max(1, parseIntegerInput(entry?.sort_order ?? entry?.sortOrder, 1));
+    dedupedById.set(normalizedId, {
+      id: normalizedId,
+      sort_order: sortOrder
+    });
+  }
+
+  const normalizedUpdates = [...dedupedById.values()];
+  if (normalizedUpdates.length === 0) {
+    return fetchLauncherGamesFromSupabase({ limit: 500 });
+  }
+
+  const batchSize = 12;
+  for (let index = 0; index < normalizedUpdates.length; index += batchSize) {
+    const batch = normalizedUpdates.slice(index, index + batchSize);
+    await Promise.all(
+      batch.map(async (entry) => {
+        const endpoint = new URL(`${config.supabaseUrl}/rest/v1/launcher_games`);
+        endpoint.searchParams.set("id", `eq.${entry.id}`);
+        endpoint.searchParams.set("select", "id,sort_order");
+
+        const response = await fetchSupabaseWithRetry(endpoint.toString(), {
+          method: "PATCH",
+          headers: {
+            apikey: config.supabaseRestKey,
+            Authorization: `Bearer ${config.supabaseRestKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=representation"
+          },
+          body: JSON.stringify({
+            sort_order: entry.sort_order
+          })
+        });
+
+        const responseText = await response.text();
+        const responsePayload = parseSupabaseResponsePayload(responseText);
+        if (!response.ok) {
+          throw new Error(
+            buildSupabaseErrorMessage(responsePayload, response.status, `Falha ao atualizar ordem de ${entry.id}`)
+          );
+        }
+
+        const rows = Array.isArray(responsePayload)
+          ? responsePayload
+          : responsePayload && typeof responsePayload === "object"
+            ? [responsePayload]
+            : [];
+        if (rows.length === 0) {
+          throw new Error(`Jogo ${entry.id} nao encontrado para atualizar ordem.`);
+        }
+      })
+    );
+  }
+
+  return fetchLauncherGamesFromSupabase({ limit: 500 });
 }
 
 async function fetchRuntimeFlagFromSupabase(flagId) {
@@ -1639,6 +1705,48 @@ const publishUpload = multer({
   }
 });
 
+function normalizeOrderedIdsPayload(value) {
+  const source = Array.isArray(value)
+    ? value
+    : Array.isArray(value?.orderedIds)
+      ? value.orderedIds
+      : Array.isArray(value?.ids)
+        ? value.ids
+        : [];
+  const deduped = [];
+  const seen = new Set();
+  for (const entry of source) {
+    const id = readText(entry).toLowerCase();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    deduped.push(id);
+  }
+  return deduped;
+}
+
+function escapeSqlLiteral(value) {
+  return String(value ?? "").replace(/'/g, "''");
+}
+
+function buildSortOrderUpdateSql(orderedIds = []) {
+  const values = orderedIds
+    .map((id, index) => `('${escapeSqlLiteral(id)}', ${(index + 1) * 10})`)
+    .join(",\n  ");
+  if (!values) {
+    return "";
+  }
+  return [
+    "update public.launcher_games as lg",
+    "set sort_order = v.sort_order",
+    "from (values",
+    `  ${values}`,
+    ") as v(id, sort_order)",
+    "where lg.id = v.id;"
+  ].join("\n");
+}
+
 function createServer() {
   const app = express();
   app.disable("x-powered-by");
@@ -1956,9 +2064,6 @@ function createServer() {
           }
         }
       }
-      if (!driveFileId && existingGame?.google_drive_file_id) {
-        driveFileId = readText(existingGame.google_drive_file_id);
-      }
       const directDownloadUrl = driveFileId ? createDriveDirectDownloadUrl(driveFileId) : "";
       const normalizedDriveLinkInput = normalizeRemoteDownloadUrl(driveLinkInput);
       const gallery = galleryInput.length ? galleryInput : normalizeJsonArrayField(existingGame?.gallery);
@@ -1989,7 +2094,7 @@ function createServer() {
         parsePositiveIntegerInput(existingGame?.steam_app_id, 0);
       const resolvedGoogleApiKey = readText(
         req.body?.googleApiKey || req.body?.google_api_key,
-        readText(existingGame?.google_api_key, readText(config.googleApiKey))
+        readText(config.googleApiKey)
       );
 
       const gamePayload = {
@@ -2016,12 +2121,10 @@ function createServer() {
         ),
         download_urls: downloadUrls,
         download_sources: createDownloadSources(id, driveFileId, resolvedGoogleApiKey, downloadUrls),
-        google_drive_file_id: driveFileId,
         local_archive_file: readText(
           req.body?.localArchiveFile || req.body?.local_archive_file,
           readText(existingGame?.local_archive_file)
         ),
-        google_api_key: resolvedGoogleApiKey,
         install_dir_name: readText(
           req.body?.installDirName || req.body?.install_dir_name,
           readText(existingGame?.install_dir_name, name)
@@ -2427,6 +2530,80 @@ function createServer() {
       });
     }
   });
+
+  app.patch(
+    "/api/launcher-games",
+    requirePermission("editGame", "Seu cargo nao pode reorganizar jogos."),
+    async (req, res) => {
+      const orderedIds = normalizeOrderedIdsPayload(req.body);
+      if (orderedIds.length === 0) {
+        res.status(400).json({
+          error: "invalid_order_payload",
+          message: "Envie orderedIds com pelo menos um ID valido."
+        });
+        return;
+      }
+
+      try {
+        const currentGames = await fetchLauncherGamesFromSupabase({ limit: 500 });
+        const currentById = new Map(
+          (Array.isArray(currentGames) ? currentGames : []).map((game) => [readText(game?.id).toLowerCase(), game])
+        );
+
+        const missingIds = orderedIds.filter((id) => !currentById.has(id));
+        if (missingIds.length > 0) {
+          res.status(400).json({
+            error: "unknown_game_id",
+            message: `IDs de jogo invalidos na ordenacao: ${missingIds.join(", ")}`
+          });
+          return;
+        }
+
+        const orderedSet = new Set(orderedIds);
+        const finalOrderIds = [
+          ...orderedIds,
+          ...currentGames
+            .map((game) => readText(game?.id).toLowerCase())
+            .filter((id) => id && !orderedSet.has(id))
+        ];
+        const sortOrderSql = buildSortOrderUpdateSql(finalOrderIds);
+        const updates = finalOrderIds.map((id, index) => ({
+          id,
+          sort_order: (index + 1) * 10
+        }));
+        const changedUpdates = updates.filter((entry) => {
+          const current = currentById.get(entry.id);
+          const currentSortOrder = Number(current?.sort_order);
+          return !Number.isFinite(currentSortOrder) || currentSortOrder !== entry.sort_order;
+        });
+
+        if (changedUpdates.length === 0) {
+          res.json({
+            ok: true,
+            updated: 0,
+            total: currentGames.length,
+            games: currentGames,
+            sql: sortOrderSql
+          });
+          return;
+        }
+
+        const games = await updateLauncherGamesSortOrderInSupabase(changedUpdates);
+        res.json({
+          ok: true,
+          updated: changedUpdates.length,
+          total: Array.isArray(games) ? games.length : 0,
+          games: Array.isArray(games) ? games : [],
+          sql: sortOrderSql
+        });
+      } catch (error) {
+        res.status(502).json({
+          error: "reorder_launcher_games_failed",
+          message: error?.message || "Falha ao atualizar ordem dos jogos."
+        });
+      }
+    }
+  );
 
   app.delete(
     "/api/launcher-games/:id",

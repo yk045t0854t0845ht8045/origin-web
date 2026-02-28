@@ -672,10 +672,15 @@ body {
   gap: 0.72rem;
 }
 
+.game-catalog-grid.is-live-reorder .game-card-shell {
+  will-change: transform, opacity;
+  animation: catalog-live-reorder-pop 0.18s ease;
+}
+
 .game-card-shell {
   border-radius: calc(var(--radius) + 0.15rem);
   overflow: hidden;
-  transition: transform 0.18s ease, opacity 0.18s ease, filter 0.18s ease;
+  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.2s ease, filter 0.2s ease;
 }
 
 .game-card-shell[draggable="true"] {
@@ -690,6 +695,16 @@ body {
   opacity: 0.3;
   transform: scale(0.98);
   filter: saturate(0.65);
+}
+
+.game-card-shell.is-drop-target {
+  transform: translateY(-3px) scale(1.01);
+  filter: saturate(1.08);
+}
+
+.game-card-shell.is-drop-target .game-card {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.42);
 }
 
 .game-card {
@@ -790,44 +805,12 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
-.catalog-drop-slot {
-  min-height: 186px;
-  border: 1px dashed hsl(var(--ring) / 0.75);
-  border-radius: calc(var(--radius) + 0.1rem);
-  background:
-    linear-gradient(145deg, hsl(var(--accent) / 0.6), hsl(var(--background) / 0.75)),
-    radial-gradient(circle at 25% 20%, hsl(var(--ring) / 0.14), transparent 62%);
-  box-shadow: inset 0 0 0 1px hsl(var(--ring) / 0.2);
-  display: grid;
-  place-items: center;
-  padding: 0.9rem;
-  animation: catalog-drop-slot-pulse 1.25s ease-in-out infinite;
-}
-
-.catalog-drop-slot span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 1px solid hsl(var(--ring) / 0.75);
-  background: hsl(var(--background) / 0.9);
-  color: hsl(var(--foreground));
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 0.34rem 0.58rem;
-}
-
-@keyframes catalog-drop-slot-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    box-shadow: inset 0 0 0 1px hsl(var(--ring) / 0.2), 0 0 0 0 hsl(var(--ring) / 0.16);
+@keyframes catalog-live-reorder-pop {
+  from {
+    transform: scale(0.99);
   }
-  50% {
-    transform: scale(1.01);
-    box-shadow: inset 0 0 0 1px hsl(var(--ring) / 0.28), 0 0 0 8px hsl(var(--ring) / 0);
+  to {
+    transform: scale(1);
   }
 }
 

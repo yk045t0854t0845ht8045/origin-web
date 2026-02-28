@@ -29,6 +29,27 @@ function normalizeOrderedIdsPayload(value) {
   return deduped;
 }
 
+function escapeSqlLiteral(value) {
+  return String(value ?? "").replace(/'/g, "''");
+}
+
+function buildSortOrderUpdateSql(orderedIds = []) {
+  const values = orderedIds
+    .map((id, index) => `('${escapeSqlLiteral(id)}', ${(index + 1) * 10})`)
+    .join(",\n  ");
+  if (!values) {
+    return "";
+  }
+  return [
+    "update public.launcher_games as lg",
+    "set sort_order = v.sort_order",
+    "from (values",
+    `  ${values}`,
+    ") as v(id, sort_order)",
+    "where lg.id = v.id;"
+  ].join("\n");
+}
+
 async function handleListLauncherGames(req, res) {
   const viewer = await requireAdmin(req, res);
   if (!viewer) {
@@ -105,6 +126,7 @@ async function handleReorderLauncherGames(req, res) {
         .map((game) => readText(game?.id).toLowerCase())
         .filter((id) => id && !orderedSet.has(id))
     ];
+    const sortOrderSql = buildSortOrderUpdateSql(finalOrderIds);
     const updates = finalOrderIds.map((id, index) => ({
       id,
       sort_order: (index + 1) * 10
@@ -120,7 +142,8 @@ async function handleReorderLauncherGames(req, res) {
         ok: true,
         updated: 0,
         total: currentGames.length,
-        games: currentGames
+        games: currentGames,
+        sql: sortOrderSql
       });
       return;
     }
@@ -130,7 +153,8 @@ async function handleReorderLauncherGames(req, res) {
       ok: true,
       updated: changedUpdates.length,
       total: Array.isArray(games) ? games.length : 0,
-      games: Array.isArray(games) ? games : []
+      games: Array.isArray(games) ? games : [],
+      sql: sortOrderSql
     });
   } catch (error) {
     res.status(502).json({

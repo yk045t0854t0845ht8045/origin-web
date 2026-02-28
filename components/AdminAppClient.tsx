@@ -81,7 +81,7 @@ type LauncherGame = {
   enabled: boolean;
   sort_order: number;
   created_at: string;
-  google_drive_file_id: string;
+  google_drive_file_id?: string;
   download_url: string;
   updated_at: string;
   imageUrl?: string;
@@ -89,10 +89,6 @@ type LauncherGame = {
   bannerUrl?: string;
   logoUrl?: string;
 };
-
-type CatalogRenderItem =
-  | { kind: "game"; game: LauncherGame }
-  | { kind: "placeholder"; dropIndex: number };
 
 type FormState = {
   id: string;
@@ -825,6 +821,18 @@ function reorderGamesByDropIndex(games: LauncherGame[], draggedId: string, dropI
   return withoutDragged;
 }
 
+function hasSameGameOrder(left: LauncherGame[], right: LauncherGame[]): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index]?.id !== right[index]?.id) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function withSequentialSortOrder(games: LauncherGame[]): LauncherGame[] {
   return games.map((game, index) => ({
     ...game,
@@ -997,7 +1005,7 @@ export function AdminAppClient() {
   const [draggedGalleryIndex, setDraggedGalleryIndex] = useState<number | null>(null);
   const [galleryDropIndex, setGalleryDropIndex] = useState<number | null>(null);
   const [draggedCatalogGameId, setDraggedCatalogGameId] = useState("");
-  const [catalogDropIndex, setCatalogDropIndex] = useState<number | null>(null);
+  const [catalogDropTargetGameId, setCatalogDropTargetGameId] = useState("");
   const [isSavingCatalogOrder, setIsSavingCatalogOrder] = useState(false);
   const [draftUpdatedAt, setDraftUpdatedAt] = useState("");
   const [isJsonImportOpen, setIsJsonImportOpen] = useState(false);
@@ -1021,6 +1029,7 @@ export function AdminAppClient() {
   const archiveDragDepthRef = useRef(0);
   const noticeHideTimerRef = useRef<number | null>(null);
   const noticeHoveredRef = useRef(false);
+  const catalogDragSnapshotRef = useRef<LauncherGame[] | null>(null);
 
   const suggestedId = useMemo(() => normalizeId(form.name), [form.name]);
   const resolvedId = useMemo(() => normalizeId(form.id || suggestedId), [form.id, suggestedId]);
@@ -1164,26 +1173,9 @@ export function AdminAppClient() {
   const canManageMaintenance = Boolean(viewerPermissions.manageMaintenance);
   const isCatalogReorderEnabled = canEditGames && search.trim().length === 0 && !gamesLoading && !isSavingCatalogOrder;
   const catalogDragActive = Boolean(draggedCatalogGameId);
-  const catalogRenderItems = useMemo<CatalogRenderItem[]>(() => {
-    if (!catalogDragActive || catalogDropIndex === null) {
-      return filteredGames.map((game) => ({ kind: "game", game }));
-    }
-
-    const withoutDragged = filteredGames.filter((game) => game.id !== draggedCatalogGameId);
-    const safeDropIndex = Math.max(0, Math.min(catalogDropIndex, withoutDragged.length));
-    const renderItems: CatalogRenderItem[] = withoutDragged.map((game) => ({ kind: "game", game }));
-    renderItems.splice(safeDropIndex, 0, { kind: "placeholder", dropIndex: safeDropIndex });
-    return renderItems;
-  }, [catalogDragActive, catalogDropIndex, draggedCatalogGameId, filteredGames]);
-  const catalogDropPosition = useMemo(() => {
-    if (!catalogDragActive || catalogDropIndex === null) {
-      return null;
-    }
-    return Math.max(0, catalogDropIndex) + 1;
-  }, [catalogDragActive, catalogDropIndex]);
   const draggedCatalogGame = useMemo(
-    () => filteredGames.find((game) => game.id === draggedCatalogGameId) || null,
-    [filteredGames, draggedCatalogGameId]
+    () => games.find((game) => game.id === draggedCatalogGameId) || null,
+    [games, draggedCatalogGameId]
   );
   const editingStaffRecord = useMemo(
     () => admins.find((entry) => entry.steamId === editingStaffId) || null,
@@ -1516,29 +1508,43 @@ export function AdminAppClient() {
 
   function resetCatalogDragState() {
     setDraggedCatalogGameId("");
-    setCatalogDropIndex(null);
+    setCatalogDropTargetGameId("");
+    catalogDragSnapshotRef.current = null;
   }
 
-  function resolveCatalogDropIndexFromCard(event: DragEvent<HTMLElement>, overGameId: string): number | null {
-    if (!draggedCatalogGameId) {
+  function cancelCatalogDragAndRevert() {
+    if (Array.isArray(catalogDragSnapshotRef.current)) {
+      setGames(catalogDragSnapshotRef.current);
+    }
+    resetCatalogDragState();
+  }
+
+  function resolveCatalogDropIndexFromCard(
+    event: DragEvent<HTMLElement>,
+    overGameId: string,
+    draggedId: string,
+    sourceGames: LauncherGame[]
+  ): number | null {
+    if (!draggedId) {
       return null;
     }
 
-    const draggedIndex = filteredGames.findIndex((game) => game.id === draggedCatalogGameId);
-    const overIndex = filteredGames.findIndex((game) => game.id === overGameId);
+    const draggedIndex = sourceGames.findIndex((game) => game.id === draggedId);
+    const overIndex = sourceGames.findIndex((game) => game.id === overGameId);
     if (draggedIndex < 0 || overIndex < 0) {
       return null;
     }
 
     const rect = event.currentTarget.getBoundingClientRect();
-    const dropAfter = event.clientY >= rect.top + rect.height / 2;
+    const horizontalOffset = Math.abs(event.clientX - (rect.left + rect.width / 2));
+    const verticalOffset = Math.abs(event.clientY - (rect.top + rect.height / 2));
+    const prioritizeHorizontal = horizontalOffset > verticalOffset;
+    const dropAfter = prioritizeHorizontal ? event.clientX >= rect.left + rect.width / 2 : event.clientY >= rect.top + rect.height / 2;
     const rawIndex = overIndex + (dropAfter ? 1 : 0);
-    const adjustedIndex = rawIndex > draggedIndex ? rawIndex - 1 : rawIndex;
-    const maxIndex = Math.max(0, filteredGames.length - 1);
-    return Math.max(0, Math.min(adjustedIndex, maxIndex));
+    return Math.max(0, Math.min(rawIndex, sourceGames.length));
   }
 
-  async function saveCatalogOrder(nextOrderedGames: LauncherGame[]) {
+  async function saveCatalogOrder(nextOrderedGames: LauncherGame[], previousGamesFallback?: LauncherGame[]) {
     if (!isCatalogReorderEnabled) {
       return;
     }
@@ -1550,7 +1556,7 @@ export function AdminAppClient() {
       return;
     }
 
-    const previousGames = games;
+    const previousGames = Array.isArray(previousGamesFallback) ? previousGamesFallback : games;
     const optimisticGames = withSequentialSortOrder(nextOrderedGames);
     setGames(optimisticGames);
     setIsSavingCatalogOrder(true);
@@ -1607,14 +1613,15 @@ export function AdminAppClient() {
       return;
     }
 
-    const startIndex = filteredGames.findIndex((game) => game.id === normalizedGameId);
+    const startIndex = games.findIndex((game) => game.id === normalizedGameId);
     if (startIndex < 0) {
       event.preventDefault();
       return;
     }
 
+    catalogDragSnapshotRef.current = games;
     setDraggedCatalogGameId(normalizedGameId);
-    setCatalogDropIndex(Math.max(0, Math.min(startIndex, Math.max(0, filteredGames.length - 1))));
+    setCatalogDropTargetGameId(normalizedGameId);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", normalizedGameId);
   }
@@ -1626,13 +1633,16 @@ export function AdminAppClient() {
 
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    const nextDropIndex = resolveCatalogDropIndexFromCard(event, overGameId);
-    if (nextDropIndex === null) {
+    const draggedId = String(event.dataTransfer.getData("text/plain") || draggedCatalogGameId).trim() || draggedCatalogGameId;
+    const nextDropIndex = resolveCatalogDropIndexFromCard(event, overGameId, draggedId, games);
+    if (!draggedId || nextDropIndex === null) {
       return;
     }
-    if (catalogDropIndex !== nextDropIndex) {
-      setCatalogDropIndex(nextDropIndex);
+    const nextOrder = reorderGamesByDropIndex(games, draggedId, nextDropIndex);
+    if (!hasSameGameOrder(games, nextOrder)) {
+      setGames(nextOrder);
     }
+    setCatalogDropTargetGameId(overGameId);
   }
 
   function onCatalogCardDrop(event: DragEvent<HTMLElement>, overGameId: string) {
@@ -1642,19 +1652,18 @@ export function AdminAppClient() {
 
     event.preventDefault();
     event.stopPropagation();
-    const dropIndex = resolveCatalogDropIndexFromCard(event, overGameId);
+    const snapshot = Array.isArray(catalogDragSnapshotRef.current) ? catalogDragSnapshotRef.current : games;
     const draggedId = String(event.dataTransfer.getData("text/plain") || draggedCatalogGameId).trim() || draggedCatalogGameId;
+    const dropIndex = resolveCatalogDropIndexFromCard(event, overGameId, draggedId, games);
+    const nextRawOrder = dropIndex === null ? games : reorderGamesByDropIndex(games, draggedId, dropIndex);
+    const nextOrder = withSequentialSortOrder(nextRawOrder);
+    const hasChanged = !hasSameGameOrder(snapshot, nextOrder);
+    setGames(nextOrder);
     resetCatalogDragState();
-    if (dropIndex === null || !draggedId) {
+    if (!draggedId || !hasChanged) {
       return;
     }
-
-    const nextOrder = reorderGamesByDropIndex(filteredGames, draggedId, dropIndex);
-    const hasChanged = nextOrder.some((game, index) => game.id !== filteredGames[index]?.id);
-    if (!hasChanged) {
-      return;
-    }
-    void saveCatalogOrder(nextOrder);
+    void saveCatalogOrder(nextOrder, snapshot);
   }
 
   function onCatalogGridDragOver(event: DragEvent<HTMLElement>) {
@@ -1664,14 +1673,20 @@ export function AdminAppClient() {
 
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    const draggedId = String(event.dataTransfer.getData("text/plain") || draggedCatalogGameId).trim() || draggedCatalogGameId;
     const target = event.target;
     if (target instanceof Element && target.closest(".game-card-shell")) {
       return;
     }
-    const dropAtEndIndex = Math.max(0, filteredGames.length - 1);
-    if (catalogDropIndex !== dropAtEndIndex) {
-      setCatalogDropIndex(dropAtEndIndex);
+    if (!draggedId) {
+      return;
     }
+    const dropAtEndIndex = games.length;
+    const nextOrder = reorderGamesByDropIndex(games, draggedId, dropAtEndIndex);
+    if (!hasSameGameOrder(games, nextOrder)) {
+      setGames(nextOrder);
+    }
+    setCatalogDropTargetGameId("");
   }
 
   function onCatalogGridDrop(event: DragEvent<HTMLElement>) {
@@ -1685,23 +1700,30 @@ export function AdminAppClient() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
+    const snapshot = Array.isArray(catalogDragSnapshotRef.current) ? catalogDragSnapshotRef.current : games;
     const draggedId = String(event.dataTransfer.getData("text/plain") || draggedCatalogGameId).trim() || draggedCatalogGameId;
-    const dropAtEndIndex = Math.max(0, filteredGames.length - 1);
+    const dropAtEndIndex = games.length;
+    const nextRawOrder = draggedId ? reorderGamesByDropIndex(games, draggedId, dropAtEndIndex) : games;
+    const nextOrder = withSequentialSortOrder(nextRawOrder);
+    const hasChanged = !hasSameGameOrder(snapshot, nextOrder);
+    setGames(nextOrder);
     resetCatalogDragState();
     if (!draggedId) {
       return;
     }
-
-    const nextOrder = reorderGamesByDropIndex(filteredGames, draggedId, dropAtEndIndex);
-    const hasChanged = nextOrder.some((game, index) => game.id !== filteredGames[index]?.id);
     if (!hasChanged) {
       return;
     }
-    void saveCatalogOrder(nextOrder);
+    void saveCatalogOrder(nextOrder, snapshot);
   }
 
   function onCatalogDragEnd() {
-    resetCatalogDragState();
+    if (!catalogDragSnapshotRef.current) {
+      resetCatalogDragState();
+      return;
+    }
+    cancelCatalogDragAndRevert();
   }
 
   function setGenres(items: string[]) {
@@ -2140,17 +2162,17 @@ export function AdminAppClient() {
   useEffect(() => {
     if (!catalogDragActive) return;
     if (dashboardSection !== "jogos" || view !== "catalog" || !isCatalogReorderEnabled) {
-      resetCatalogDragState();
+      cancelCatalogDragAndRevert();
     }
   }, [catalogDragActive, dashboardSection, view, isCatalogReorderEnabled]);
 
   useEffect(() => {
     if (!catalogDragActive) return;
-    const draggedStillVisible = filteredGames.some((game) => game.id === draggedCatalogGameId);
+    const draggedStillVisible = games.some((game) => game.id === draggedCatalogGameId);
     if (!draggedStillVisible) {
-      resetCatalogDragState();
+      cancelCatalogDragAndRevert();
     }
-  }, [catalogDragActive, filteredGames, draggedCatalogGameId]);
+  }, [catalogDragActive, games, draggedCatalogGameId]);
 
   useEffect(() => {
     const normalizedInput = normalizeUrlInput(form.steamUrl);
@@ -3002,8 +3024,8 @@ export function AdminAppClient() {
                 : search.trim()
                   ? "Limpe a busca para reorganizar por arrastar e soltar."
                   : catalogDragActive
-                    ? `Solte ${draggedCatalogGame?.name || "o jogo"} na posicao ${catalogDropPosition || 1}.`
-                    : "Arraste um jogo para definir a ordem de exibicao no launcher (salvamento automatico)."}
+                    ? `Arrastando ${draggedCatalogGame?.name || "jogo"} com reordenacao em tempo real. Solte para salvar.`
+                    : "Arraste um jogo para definir a ordem de exibicao no launcher. Os cards se reorganizam em tempo real."}
             </article>
           ) : null}
           {!canEditGames ? (
@@ -3016,26 +3038,18 @@ export function AdminAppClient() {
             <article className="card catalog-empty">Nenhum jogo encontrado.</article>
           ) : null}
           <div
-            className={`game-catalog-grid ${catalogDragActive ? "is-dragging" : ""}`}
+            className={`game-catalog-grid ${catalogDragActive ? "is-dragging is-live-reorder" : ""}`}
             onDragOver={onCatalogGridDragOver}
             onDrop={onCatalogGridDrop}
           >
-            {catalogRenderItems.map((entry, renderIndex) => {
-              if (entry.kind === "placeholder") {
-                return (
-                  <article className="catalog-drop-slot" key={`drop-slot-${entry.dropIndex}-${renderIndex}`}>
-                    <span>Solte aqui</span>
-                  </article>
-                );
-              }
-
-              const game = entry.game;
+            {filteredGames.map((game) => {
               const cover = coverUrl(game);
               const allCandidates = coverCandidates(game);
               const isDragSource = catalogDragActive && draggedCatalogGameId === game.id;
+              const isDropTarget = catalogDragActive && catalogDropTargetGameId === game.id;
               return (
                 <article
-                  className={`game-card-shell ${isDragSource ? "is-drag-source" : ""}`}
+                  className={`game-card-shell ${isDragSource ? "is-drag-source" : ""} ${isDropTarget ? "is-drop-target" : ""}`}
                   draggable={isCatalogReorderEnabled}
                   key={game.id}
                   onDragEnd={onCatalogDragEnd}

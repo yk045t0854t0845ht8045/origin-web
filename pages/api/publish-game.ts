@@ -40,9 +40,7 @@ const LAUNCHER_GAMES_SELECT_COLUMNS = [
   "download_url",
   "download_urls",
   "download_sources",
-  "google_drive_file_id",
   "local_archive_file",
-  "google_api_key",
   "install_dir_name",
   "launch_executable",
   "auto_detect_executable",
@@ -464,9 +462,7 @@ function normalizeLauncherGameRow(row) {
     download_url: readText(row.download_url),
     download_urls: normalizeJsonArrayField(row.download_urls),
     download_sources: normalizeJsonArrayField(row.download_sources),
-    google_drive_file_id: readText(row.google_drive_file_id),
     local_archive_file: readText(row.local_archive_file),
-    google_api_key: readText(row.google_api_key),
     install_dir_name: readText(row.install_dir_name),
     launch_executable: readText(row.launch_executable),
     auto_detect_executable: parseBooleanInput(row.auto_detect_executable, true),
@@ -709,9 +705,6 @@ export default async function handler(req, res) {
         }
       }
     }
-    if (!driveFileId && existingGame?.google_drive_file_id) {
-      driveFileId = readText(existingGame.google_drive_file_id);
-    }
     const directDownloadUrl = driveFileId ? createDriveDirectDownloadUrl(driveFileId) : "";
     const normalizedDriveLinkInput = normalizeRemoteDownloadUrl(driveLinkInput);
     const gallery = galleryInput.length ? galleryInput : normalizeJsonArrayField(existingGame?.gallery);
@@ -742,7 +735,7 @@ export default async function handler(req, res) {
       parsePositiveIntegerInput(existingGame?.steam_app_id, 0);
     const resolvedGoogleApiKey = readText(
       req.body?.googleApiKey || req.body?.google_api_key,
-      readText(existingGame?.google_api_key, readText(runtimeConfig.googleApiKey))
+      readText(runtimeConfig.googleApiKey)
     );
 
     const gamePayload = {
@@ -763,9 +756,7 @@ export default async function handler(req, res) {
       ),
       download_urls: downloadUrls,
       download_sources: createDownloadSources(id, driveFileId, resolvedGoogleApiKey, downloadUrls),
-      google_drive_file_id: driveFileId,
       local_archive_file: readText(req.body?.localArchiveFile || req.body?.local_archive_file, readText(existingGame?.local_archive_file)),
-      google_api_key: resolvedGoogleApiKey,
       install_dir_name: readText(req.body?.installDirName || req.body?.install_dir_name, readText(existingGame?.install_dir_name, name)),
       launch_executable: readText(req.body?.launchExecutable || req.body?.launch_executable, readText(existingGame?.launch_executable)),
       auto_detect_executable: parseBooleanInput(
