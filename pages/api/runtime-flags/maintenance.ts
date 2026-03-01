@@ -7,6 +7,7 @@ const {
   upsertRuntimeFlagInSupabase,
   parseBooleanInput,
   parseObjectInput,
+  normalizeMaintenanceVariantInput,
   readText
 } = require("../../../src/supabase-dashboard");
 
@@ -41,12 +42,30 @@ async function handlePatch(req, res) {
 
   try {
     const existingFlag = (await fetchRuntimeFlagFromSupabase(MAINTENANCE_FLAG_ID)) || defaultMaintenanceFlag();
+    const existingData = parseObjectInput(existingFlag.data, {
+      variant: normalizeMaintenanceVariantInput(existingFlag.variant, "alert")
+    });
+    const requestData = parseObjectInput(req.body?.data, existingData);
+    const variant = normalizeMaintenanceVariantInput(
+      req.body?.variant ??
+        req.body?.bannerVariant ??
+        req.body?.type ??
+        req.body?.tone ??
+        requestData.variant ??
+        requestData.bannerVariant ??
+        requestData.level,
+      normalizeMaintenanceVariantInput(existingData.variant, "alert")
+    );
     const payload = {
       id: MAINTENANCE_FLAG_ID,
       enabled: parseBooleanInput(req.body?.enabled, existingFlag.enabled),
       title: readText(req.body?.title, readText(existingFlag.title, defaultMaintenanceFlag().title)),
       message: readText(req.body?.message, readText(existingFlag.message, defaultMaintenanceFlag().message)),
-      data: parseObjectInput(req.body?.data, existingFlag.data || {})
+      data: {
+        ...existingData,
+        ...requestData,
+        variant
+      }
     };
 
     const savedFlag = (await upsertRuntimeFlagInSupabase(payload)) || {
@@ -81,4 +100,3 @@ export default async function handler(req, res) {
     message: "Metodo nao permitido."
   });
 }
-

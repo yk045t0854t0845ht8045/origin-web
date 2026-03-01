@@ -38,12 +38,15 @@ type AdminRecord = {
   };
 };
 
+type MaintenanceBannerVariant = "message" | "alert" | "critical";
+
 type MaintenanceFlag = {
   id: string;
   enabled: boolean;
   title: string;
   message: string;
   data: Record<string, unknown>;
+  variant: MaintenanceBannerVariant;
   createdAt: string;
   updatedAt: string;
 };
@@ -152,15 +155,26 @@ const EMPTY_VIEWER: ViewerState = {
   user: null
 };
 
+const DEFAULT_MAINTENANCE_VARIANT: MaintenanceBannerVariant = "alert";
+
 const DEFAULT_MAINTENANCE_FLAG: MaintenanceFlag = {
   id: "maintenance_mode",
   enabled: false,
   title: "Manutencao programada",
   message: "Pode haver instabilidades temporarias durante este periodo.",
-  data: {},
+  data: {
+    variant: DEFAULT_MAINTENANCE_VARIANT
+  },
+  variant: DEFAULT_MAINTENANCE_VARIANT,
   createdAt: "",
   updatedAt: ""
 };
+
+const MAINTENANCE_VARIANT_OPTIONS: Array<{ value: MaintenanceBannerVariant; label: string }> = [
+  { value: "message", label: "Azul - Mensagem" },
+  { value: "alert", label: "Amarelo - Alertas" },
+  { value: "critical", label: "Vermelho - Erros Criticos / Paradas" }
+];
 
 const INITIAL_FORM: FormState = {
   id: "",
@@ -738,13 +752,70 @@ function formatTimestamp(value: string): string {
   return date.toLocaleString("pt-BR");
 }
 
+function normalizeMaintenanceVariant(value: unknown, fallback: MaintenanceBannerVariant = DEFAULT_MAINTENANCE_VARIANT): MaintenanceBannerVariant {
+  const fallbackNormalized = ["message", "alert", "critical"].includes(String(fallback || "").trim())
+    ? (String(fallback || "").trim() as MaintenanceBannerVariant)
+    : DEFAULT_MAINTENANCE_VARIANT;
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!normalized) return fallbackNormalized;
+  if (["message", "messages", "mensagem", "mensagens", "azul", "blue", "info", "informativo"].includes(normalized)) {
+    return "message";
+  }
+  if (["alert", "alerts", "alerta", "alertas", "warning", "warn", "amarelo", "yellow", "aviso", "avisos"].includes(normalized)) {
+    return "alert";
+  }
+  if (
+    [
+      "critical",
+      "critico",
+      "critica",
+      "criticos",
+      "criticas",
+      "vermelho",
+      "red",
+      "erro",
+      "erros",
+      "error",
+      "errors",
+      "parada",
+      "paradas",
+      "falha",
+      "falhas"
+    ].includes(normalized)
+  ) {
+    return "critical";
+  }
+  if (normalized === "message" || normalized === "alert" || normalized === "critical") {
+    return normalized as MaintenanceBannerVariant;
+  }
+  return fallbackNormalized;
+}
+
 function normalizeMaintenanceFlag(payload: unknown): MaintenanceFlag {
   const row = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
   const dataRaw = row.data;
-  const data =
+  const baseData =
     dataRaw && typeof dataRaw === "object" && !Array.isArray(dataRaw)
       ? (dataRaw as Record<string, unknown>)
       : DEFAULT_MAINTENANCE_FLAG.data;
+  const variant = normalizeMaintenanceVariant(
+    row.variant ??
+      row.bannerVariant ??
+      row.banner_variant ??
+      baseData.variant ??
+      baseData.bannerVariant ??
+      baseData.type ??
+      baseData.tone,
+    DEFAULT_MAINTENANCE_FLAG.variant
+  );
+  const data = {
+    ...baseData,
+    variant
+  };
   const enabledRaw = row.enabled;
   const enabled =
     enabledRaw === true ||
@@ -758,6 +829,7 @@ function normalizeMaintenanceFlag(payload: unknown): MaintenanceFlag {
     title: String(row.title || DEFAULT_MAINTENANCE_FLAG.title),
     message: String(row.message || DEFAULT_MAINTENANCE_FLAG.message),
     data,
+    variant,
     createdAt: String(row.createdAt || row.created_at || ""),
     updatedAt: String(row.updatedAt || row.updated_at || "")
   };
@@ -1140,6 +1212,9 @@ export function AdminAppClient() {
   const [isSavingMaintenance, setIsSavingMaintenance] = useState(false);
   const [maintenanceTitleDraft, setMaintenanceTitleDraft] = useState(DEFAULT_MAINTENANCE_FLAG.title);
   const [maintenanceMessageDraft, setMaintenanceMessageDraft] = useState(DEFAULT_MAINTENANCE_FLAG.message);
+  const [maintenanceVariantDraft, setMaintenanceVariantDraft] = useState<MaintenanceBannerVariant>(
+    DEFAULT_MAINTENANCE_FLAG.variant
+  );
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
 
   const [view, setView] = useState<"catalog" | "editor">("catalog");
@@ -2232,10 +2307,12 @@ export function AdminAppClient() {
       setMaintenanceFlag(normalizedFlag);
       setMaintenanceTitleDraft(normalizedFlag.title);
       setMaintenanceMessageDraft(normalizedFlag.message);
+      setMaintenanceVariantDraft(normalizedFlag.variant);
     } catch (error) {
       setMaintenanceFlag(DEFAULT_MAINTENANCE_FLAG);
       setMaintenanceTitleDraft(DEFAULT_MAINTENANCE_FLAG.title);
       setMaintenanceMessageDraft(DEFAULT_MAINTENANCE_FLAG.message);
+      setMaintenanceVariantDraft(DEFAULT_MAINTENANCE_FLAG.variant);
       if (error instanceof DOMException && error.name === "AbortError") {
         setNoticeState("Tempo excedido ao carregar manutencao. Tente novamente.", true);
       } else {
@@ -2271,6 +2348,7 @@ export function AdminAppClient() {
       setMaintenanceFlag(normalizedFlag);
       setMaintenanceTitleDraft(normalizedFlag.title);
       setMaintenanceMessageDraft(normalizedFlag.message);
+      setMaintenanceVariantDraft(normalizedFlag.variant);
 
       const warnings = Array.isArray(json.warnings) ? json.warnings.filter(Boolean) : [];
       if (warnings.length > 0) {
@@ -2282,6 +2360,7 @@ export function AdminAppClient() {
       setMaintenanceFlag(DEFAULT_MAINTENANCE_FLAG);
       setMaintenanceTitleDraft(DEFAULT_MAINTENANCE_FLAG.title);
       setMaintenanceMessageDraft(DEFAULT_MAINTENANCE_FLAG.message);
+      setMaintenanceVariantDraft(DEFAULT_MAINTENANCE_FLAG.variant);
       if (error instanceof DOMException && error.name === "AbortError") {
         setNoticeState("Tempo excedido ao carregar dashboard. Tente novamente.", true);
       } else {
@@ -2298,6 +2377,7 @@ export function AdminAppClient() {
     enabled?: boolean;
     title?: string;
     message?: string;
+    variant?: MaintenanceBannerVariant;
     data?: Record<string, unknown>;
   }, successNotice = "") {
     if (!canManageMaintenance) {
@@ -2306,14 +2386,34 @@ export function AdminAppClient() {
     }
     setIsSavingMaintenance(true);
     try {
+      const baseData =
+        maintenanceFlag.data && typeof maintenanceFlag.data === "object" && !Array.isArray(maintenanceFlag.data)
+          ? maintenanceFlag.data
+          : {};
+      const incomingData =
+        next.data && typeof next.data === "object" && !Array.isArray(next.data)
+          ? next.data
+          : baseData;
+      const variant = normalizeMaintenanceVariant(
+        next.variant ??
+          maintenanceVariantDraft ??
+          maintenanceFlag.variant ??
+          incomingData.variant ??
+          incomingData.bannerVariant ??
+          incomingData.type ??
+          incomingData.tone,
+        maintenanceFlag.variant || DEFAULT_MAINTENANCE_FLAG.variant
+      );
       const payload = {
         enabled: typeof next.enabled === "boolean" ? next.enabled : maintenanceFlag.enabled,
         title: String(next.title ?? maintenanceTitleDraft).trim() || DEFAULT_MAINTENANCE_FLAG.title,
         message: String(next.message ?? maintenanceMessageDraft).trim() || DEFAULT_MAINTENANCE_FLAG.message,
-        data:
-          next.data && typeof next.data === "object" && !Array.isArray(next.data)
-            ? next.data
-            : maintenanceFlag.data || {}
+        variant,
+        data: {
+          ...baseData,
+          ...incomingData,
+          variant
+        }
       };
 
       const response = await fetch("/api/runtime-flags/maintenance", {
@@ -2336,6 +2436,7 @@ export function AdminAppClient() {
       setMaintenanceFlag(normalizedFlag);
       setMaintenanceTitleDraft(normalizedFlag.title);
       setMaintenanceMessageDraft(normalizedFlag.message);
+      setMaintenanceVariantDraft(normalizedFlag.variant);
       if (successNotice) {
         setNoticeState(successNotice, false);
       } else {
@@ -3387,7 +3488,7 @@ export function AdminAppClient() {
                       <p className="kicker">STAFFS</p>
                       <h2>Lista resumida</h2>
                       <button
-                        className={`button button-small maintenance-alert-btn maintenance-overview-trigger ${maintenanceFlag.enabled ? "is-active" : ""}`}
+                        className={`button button-small maintenance-alert-btn maintenance-alert-btn--${maintenanceFlag.variant || DEFAULT_MAINTENANCE_FLAG.variant} maintenance-overview-trigger ${maintenanceFlag.enabled ? "is-active" : ""}`}
                         onClick={() => {
                           setIsMaintenanceModalOpen(true);
                           void loadMaintenanceFlag();
@@ -4183,7 +4284,9 @@ export function AdminAppClient() {
                 <p className="kicker">MANUTENCAO DO SITE</p>
                 <h3>{maintenanceFlag.title || DEFAULT_MAINTENANCE_FLAG.title}</h3>
               </div>
-              <span className={`maintenance-state-pill ${maintenanceFlag.enabled ? "is-on" : "is-off"}`}>
+              <span
+                className={`maintenance-state-pill maintenance-state-pill--${maintenanceFlag.variant || DEFAULT_MAINTENANCE_FLAG.variant} ${maintenanceFlag.enabled ? "is-on" : "is-off"}`}
+              >
                 {maintenanceFlag.enabled ? "ATIVA" : "INATIVA"}
               </span>
             </div>
@@ -4212,6 +4315,20 @@ export function AdminAppClient() {
                   value={maintenanceMessageDraft}
                 />
               </label>
+              <label className="compact-field">
+                <span>Tipo da faixa</span>
+                <select
+                  disabled={!canManageMaintenance}
+                  onChange={(event) => setMaintenanceVariantDraft(normalizeMaintenanceVariant(event.target.value))}
+                  value={maintenanceVariantDraft}
+                >
+                  {MAINTENANCE_VARIANT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="maintenance-actions">
               <button
@@ -4221,7 +4338,8 @@ export function AdminAppClient() {
                   void saveMaintenanceFlag({
                     enabled: !maintenanceFlag.enabled,
                     title: maintenanceTitleDraft,
-                    message: maintenanceMessageDraft
+                    message: maintenanceMessageDraft,
+                    variant: maintenanceVariantDraft
                   }, !maintenanceFlag.enabled ? "Modo manutencao ativado com sucesso." : "Modo manutencao desativado com sucesso.")
                 }
                 type="button"
@@ -4235,7 +4353,8 @@ export function AdminAppClient() {
                   void saveMaintenanceFlag({
                     enabled: maintenanceFlag.enabled,
                     title: maintenanceTitleDraft,
-                    message: maintenanceMessageDraft
+                    message: maintenanceMessageDraft,
+                    variant: maintenanceVariantDraft
                   }, "Aviso de manutencao atualizado.")
                 }
                 type="button"

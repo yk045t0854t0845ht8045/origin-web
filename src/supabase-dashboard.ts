@@ -52,6 +52,8 @@ const LAUNCHER_GAMES_SELECT_COLUMNS = [
 
 const RUNTIME_FLAGS_SELECT_COLUMNS = ["id", "enabled", "title", "message", "data", "created_at", "updated_at"].join(",");
 const MAINTENANCE_FLAG_ID = "maintenance_mode";
+const MAINTENANCE_DEFAULT_VARIANT = "alert";
+const MAINTENANCE_VARIANTS = new Set(["message", "alert", "critical"]);
 
 const launcherGamesCache = {
   data: [],
@@ -150,6 +152,62 @@ function parseObjectInput(value, fallback = {}) {
   return fallback && typeof fallback === "object" && !Array.isArray(fallback) ? fallback : {};
 }
 
+function normalizeMaintenanceVariantInput(value, fallback = MAINTENANCE_DEFAULT_VARIANT) {
+  const safeFallback = MAINTENANCE_VARIANTS.has(String(fallback || "").trim().toLowerCase())
+    ? String(fallback || "").trim().toLowerCase()
+    : MAINTENANCE_DEFAULT_VARIANT;
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!normalized) return safeFallback;
+  if (["message", "messages", "mensagem", "mensagens", "azul", "blue", "info", "informativo"].includes(normalized)) {
+    return "message";
+  }
+  if (["alert", "alerts", "alerta", "alertas", "warning", "warn", "amarelo", "yellow", "aviso", "avisos"].includes(normalized)) {
+    return "alert";
+  }
+  if (
+    [
+      "critical",
+      "critico",
+      "critica",
+      "criticos",
+      "criticas",
+      "erro",
+      "erros",
+      "error",
+      "errors",
+      "vermelho",
+      "red",
+      "parada",
+      "paradas",
+      "falha",
+      "falhas"
+    ].includes(normalized)
+  ) {
+    return "critical";
+  }
+  return MAINTENANCE_VARIANTS.has(normalized) ? normalized : safeFallback;
+}
+
+function normalizeMaintenanceFlagData(value, fallback = {}) {
+  const fallbackData = fallback && typeof fallback === "object" && !Array.isArray(fallback) ? fallback : {};
+  const parsed = parseObjectInput(value, fallbackData);
+  const variant = normalizeMaintenanceVariantInput(
+    parsed.variant ?? parsed.bannerVariant ?? parsed.type ?? parsed.tone ?? parsed.level,
+    normalizeMaintenanceVariantInput(
+      fallbackData.variant ?? fallbackData.bannerVariant ?? fallbackData.type ?? fallbackData.tone ?? fallbackData.level,
+      MAINTENANCE_DEFAULT_VARIANT
+    )
+  );
+  return {
+    ...parsed,
+    variant
+  };
+}
+
 function normalizeLauncherGameRow(row) {
   if (!row || typeof row !== "object") {
     return null;
@@ -232,12 +290,21 @@ function normalizeRuntimeFlagRow(row) {
   if (!row || typeof row !== "object") {
     return null;
   }
+  const data = normalizeMaintenanceFlagData(row.data, { variant: MAINTENANCE_DEFAULT_VARIANT });
+  const variant = normalizeMaintenanceVariantInput(
+    row.variant ?? row.banner_variant ?? row.bannerVariant ?? data.variant,
+    MAINTENANCE_DEFAULT_VARIANT
+  );
   return {
     id: readText(row.id),
     enabled: parseBooleanInput(row.enabled, false),
     title: readText(row.title, "Manutencao programada"),
     message: readText(row.message, "Pode haver instabilidades temporarias durante este periodo."),
-    data: parseObjectInput(row.data, {}),
+    data: {
+      ...data,
+      variant
+    },
+    variant,
     created_at: readText(row.created_at),
     updated_at: readText(row.updated_at)
   };
@@ -249,7 +316,10 @@ function defaultMaintenanceFlag() {
     enabled: false,
     title: "Manutencao programada",
     message: "Pode haver instabilidades temporarias durante este periodo.",
-    data: {},
+    data: {
+      variant: MAINTENANCE_DEFAULT_VARIANT
+    },
+    variant: MAINTENANCE_DEFAULT_VARIANT,
     created_at: "",
     updated_at: ""
   };
@@ -554,6 +624,7 @@ async function supabaseHealthCheck() {
 module.exports = {
   MAINTENANCE_FLAG_ID,
   defaultMaintenanceFlag,
+  normalizeMaintenanceVariantInput,
   parseBooleanInput,
   parseObjectInput,
   parsePositiveIntegerInput,

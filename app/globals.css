@@ -433,20 +433,60 @@ body {
 }
 
 .maintenance-alert-btn {
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+  background: hsl(var(--accent) / 0.35);
+}
+
+.maintenance-alert-btn--alert {
   border-color: hsl(34 92% 56% / 0.46);
   color: hsl(38 95% 74%);
   background: hsl(32 72% 22% / 0.35);
 }
 
-.maintenance-alert-btn:hover:not(:disabled) {
+.maintenance-alert-btn--alert:hover:not(:disabled) {
   border-color: hsl(34 92% 56% / 0.68);
   background: hsl(32 72% 28% / 0.48);
 }
 
-.maintenance-alert-btn.is-active {
+.maintenance-alert-btn--alert.is-active {
   border-color: hsl(22 94% 56% / 0.74);
   color: hsl(28 96% 76%);
   background: hsl(19 78% 28% / 0.58);
+}
+
+.maintenance-alert-btn--message {
+  border-color: hsl(209 92% 58% / 0.46);
+  color: hsl(206 96% 78%);
+  background: hsl(212 74% 24% / 0.34);
+}
+
+.maintenance-alert-btn--message:hover:not(:disabled) {
+  border-color: hsl(209 92% 64% / 0.68);
+  background: hsl(212 74% 30% / 0.48);
+}
+
+.maintenance-alert-btn--message.is-active {
+  border-color: hsl(204 94% 66% / 0.74);
+  color: hsl(203 100% 86%);
+  background: hsl(210 76% 33% / 0.58);
+}
+
+.maintenance-alert-btn--critical {
+  border-color: hsl(2 86% 58% / 0.48);
+  color: hsl(6 95% 79%);
+  background: hsl(2 74% 23% / 0.36);
+}
+
+.maintenance-alert-btn--critical:hover:not(:disabled) {
+  border-color: hsl(2 92% 66% / 0.68);
+  background: hsl(2 74% 30% / 0.5);
+}
+
+.maintenance-alert-btn--critical.is-active {
+  border-color: hsl(2 96% 72% / 0.74);
+  color: hsl(8 100% 88%);
+  background: hsl(2 80% 34% / 0.6);
 }
 
 .maintenance-overview-trigger {
@@ -566,9 +606,27 @@ body {
 }
 
 .maintenance-state-pill.is-on {
-  border-color: hsl(142 72% 40% / 0.55);
-  color: hsl(142 72% 78%);
-  background: hsl(142 55% 20% / 0.35);
+  border-color: hsl(34 88% 52% / 0.58);
+  color: hsl(37 96% 74%);
+  background: hsl(30 65% 22% / 0.4);
+}
+
+.maintenance-state-pill.is-on.maintenance-state-pill--message {
+  border-color: hsl(208 90% 58% / 0.58);
+  color: hsl(206 96% 82%);
+  background: hsl(212 70% 24% / 0.42);
+}
+
+.maintenance-state-pill.is-on.maintenance-state-pill--alert {
+  border-color: hsl(34 88% 52% / 0.58);
+  color: hsl(37 96% 74%);
+  background: hsl(30 65% 22% / 0.4);
+}
+
+.maintenance-state-pill.is-on.maintenance-state-pill--critical {
+  border-color: hsl(2 88% 58% / 0.62);
+  color: hsl(7 100% 86%);
+  background: hsl(2 70% 24% / 0.42);
 }
 
 .maintenance-state-pill.is-off {
@@ -600,7 +658,8 @@ body {
 }
 
 .compact-field input,
-.compact-field textarea {
+.compact-field textarea,
+.compact-field select {
   font-size: 0.78rem;
   padding: 0.42rem 0.5rem;
 }
