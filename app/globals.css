@@ -834,6 +834,78 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
+.game-card-delete-button {
+  position: absolute;
+  top: 0.48rem;
+  right: 0.48rem;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid hsl(0 85% 60% / 0.7);
+  border-radius: 999px;
+  background: hsl(0 74% 22% / 0.88);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 6;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.94);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.game-card-delete-button svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.game-card-shell:hover .game-card-delete-button,
+.game-card-shell:focus-within .game-card-delete-button {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.game-card-delete-button:hover:not(:disabled) {
+  border-color: hsl(0 95% 70%);
+  background: hsl(0 82% 34% / 0.96);
+}
+
+.game-card-delete-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.game-card-delete-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.game-catalog-grid.is-dragging .game-card-delete-button {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.94);
+}
+
+@media (hover: none) {
+  .game-card-delete-button {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .editor-actions {
   display: flex;
   gap: 0.45rem;

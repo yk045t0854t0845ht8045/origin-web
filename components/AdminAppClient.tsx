@@ -3532,6 +3532,33 @@ export function AdminAppClient() {
                       </div>
                     </div>
                   </button>
+                  {canRemoveGames ? (
+                    <button
+                      aria-label={`Remover jogo ${game.name || game.id}`}
+                      className="game-card-delete-button"
+                      disabled={isRemovingGame || isSavingCatalogOrder || catalogDragActive}
+                      draggable={false}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        requestGameRemoval(game);
+                      }}
+                      onDragStart={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      type="button"
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24">
+                        <path d="M4 7h16" />
+                        <path d="M9 7V5h6v2" />
+                        <path d="M7 7l1 12h8l1-12" />
+                        <path d="M10 11v5" />
+                        <path d="M14 11v5" />
+                      </svg>
+                    </button>
+                  ) : null}
                 </article>
               );
             })}
@@ -4372,9 +4399,10 @@ export function AdminAppClient() {
         <aside className="confirm-overlay" role="dialog">
           <article className="card confirm-card">
             <p className="kicker">REMOVER JOGO</p>
-            <h3>Confirmar remocao</h3>
+            <h3>Tem certeza que deseja deletar este jogo?</h3>
             <p className="text-muted">
-              Esta acao remove o jogo <strong>{gameRemovalTarget.name || gameRemovalTarget.id}</strong> do catalogo.
+              Esta acao remove o jogo <strong>{gameRemovalTarget.name || gameRemovalTarget.id}</strong> do catalogo e
+              do banco de dados remoto.
             </p>
             <div className="confirm-actions">
               <button
@@ -4383,7 +4411,7 @@ export function AdminAppClient() {
                 onClick={() => setGameRemovalTarget(null)}
                 type="button"
               >
-                Cancelar
+                Nao, cancelar
               </button>
               <button
                 className="button button-danger"
@@ -4391,7 +4419,7 @@ export function AdminAppClient() {
                 onClick={() => void confirmGameRemoval()}
                 type="button"
               >
-                {isRemovingGame ? "Removendo..." : "Confirmar remocao"}
+                {isRemovingGame ? "Deletando..." : "Sim, deletar jogo"}
               </button>
             </div>
           </article>
